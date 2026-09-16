@@ -1,0 +1,26 @@
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Bytecode & caches
+__pycache__/
+*.py[cod]
+*.class
+.pytest_cache/
+
+# Heavy video files (exclude raw benchmark videos > 250MB)
+data/*.avi
+data/*.mp4
+data/preview_frames/
+
+# Heavy model binaries
+*.pt
+*.dll
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
