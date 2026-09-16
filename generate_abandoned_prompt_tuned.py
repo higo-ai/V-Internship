@@ -223,12 +223,12 @@ prompt_payload = {
         "You are an advanced Video Visual Relation Detection AI for surveillance analytics. "
         "You are given a sequential series of video frames with numbered visual marks [ID] identifying subjects and objects. "
         "Your task is to detect all active relations between the marked entities over time. "
-        "You MUST strictly choose relations from the provided 26 relation categories. "
+        "STRICT CONSTRAINTS:\n" f"1. You MUST strictly choose relations ONLY from the allowed 26 categories: {relations_list}.\n" 
         "Output strictly valid JSON list of triplets: [{\"subject\": \"[ID]\", \"relation\": \"<verb>\", \"object\": \"[ID]\"}]."
     ),
     "vlm_user_prompt": (
         f"Analyze the {NUM_VLM_FRAMES} sequential frames of this surveillance clip. "
-        f"Entities detected with visual marks: {list(tracked_entities.keys())}. "
+        f"Entities detected with visual marks: {sorted(list(tracked_entities.keys()))}. "
         f"Identify all active relationships occurring between any pair of entities (Person-Person, Person-Object). "
         f"Choose relations strictly from the provided 26 relation categories. "
         'Respond ONLY with a JSON array of triplets: [{"subject": "[ID]", "relation": "<verb>", "object": "[ID]"}].'

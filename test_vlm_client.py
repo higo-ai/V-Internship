@@ -69,6 +69,11 @@ def main():
     system_prompt = payload.get("vlm_system_prompt", "")
     user_prompt = payload.get("vlm_user_prompt", "")
 
+    # Reinforce vocabulary in system prompt to prevent VLM hallucination
+    vocab_str = ", ".join(allowed_relations)
+    if vocab_str not in system_prompt:
+        system_prompt += f"\n\nSTRICT ALLOWED 26 RELATIONS VOCABULARY:\n[{vocab_str}]"
+
     # Determine frames directory dynamically
     if "tuned" in args.payload.lower():
         frames_dir = os.path.join(base_dir, "data", "vlm_input_frames_abandoned_tuned")
