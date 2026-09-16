@@ -35,11 +35,11 @@ print(f"Original Video: {total_frames} frames, {fps:.2f} FPS")
 print(f"Clipping segment: {START_SEC}s - {END_SEC}s (frames {start_frame} to {end_frame}, total {clip_frame_count} frames)")
 
 # 3. Initialize YOLO Models
-# Separate instances: person_model maintains persistent ByteTrack predictor state;
-# bag_model performs independent detection without resetting person_model predictor.
+# Decoupled instances: tracker_model maintains persistent ByteTrack predictor state;
+# detector_model performs independent object detection without resetting tracker_model predictor.
 print("Loading YOLO models...")
-person_model = YOLO(os.path.join(base_dir, "yolo11n.pt"))
-bag_model = YOLO(os.path.join(base_dir, "yolo11n.pt"))
+tracker_model = YOLO(os.path.join(base_dir, "yolo11n.pt"))
+detector_model = YOLO(os.path.join(base_dir, "yolo11n.pt"))
 
 COLOR_PALETTE = [
     (0, 0, 255),     # 0: Red
@@ -78,7 +78,7 @@ while frame_idx < end_frame:
         break
 
     # Track persons dynamically using ByteTrack with custom IoU match_thresh
-    results = person_model.track(
+    results = tracker_model.track(
         frame,
         persist=True,
         tracker=os.path.join(base_dir, "custom_bytetrack.yaml"),
@@ -88,7 +88,7 @@ while frame_idx < end_frame:
     )
 
     # Detect bag candidates with sensitivity conf=0.15 using separate detector
-    bag_res = bag_model.predict(frame, conf=0.15, classes=[24, 26, 28], verbose=False)
+    bag_res = detector_model.predict(frame, conf=0.15, classes=[24, 26, 28], verbose=False)
     
     annotated_frame = frame.copy()
 
@@ -104,7 +104,7 @@ while frame_idx < end_frame:
                 continue
 
             x1, y1, x2, y2 = box
-            class_name = person_model.names[cid]
+            class_name = tracker_model.names[cid]
             mark_id = f"[{tid}]"
             tracked_entities[mark_id] = class_name
             color = COLOR_PALETTE[tid % len(COLOR_PALETTE)]
@@ -195,10 +195,10 @@ for order, s_idx in enumerate(sample_indices, 1):
 with open(os.path.join(base_dir, "relations.json"), encoding="utf-8") as f:
     relations_list = json.load(f)
 
-# 6. Generate Tuned VLM Prompt Payload
+# 6. Generate Tuned VLM Prompt Payload (Generalized VidVRD Format)
 prompt_payload = {
-    "task": "Video Visual Relation Detection (VidVRD) - Abandoned Object Scenario (Tuned Pipeline)",
-    "scenario": "Abandoned Object Detection via Stationary Spatial Anchor Persistence & Majority Voting",
+    "task": "Video Visual Relation Detection (VidVRD) - Surveillance Scenario",
+    "scenario": "All-Pairs Visual Relation Detection between Marked Entities over Time",
     "model_target": "Qwen2-VL-2B-Instruct",
     "clip_info": {
         "source_video": "video1.avi",
@@ -208,10 +208,10 @@ prompt_payload = {
         "total_clip_frames": len(processed_frames),
         "sampled_frames_count": NUM_VLM_FRAMES,
         "tuning_features": [
+            "Decoupled YOLO Architecture: tracker_model (ByteTrack) and detector_model (Object Detection)",
+            "IoU Match Threshold Tuning: Separates exiting Person [2] from entering passerby Person [3]",
             "Spatial Anchor Persistence: Bag retains persistent ID [4] across occlusions",
-            "Temporal Majority Voting: Consistent class label 'handbag' from standard 60-object taxonomy",
-            "Continuous Boundary Box: Object remains bounded and marked through final frame",
-            "IoU Match Threshold Tuning: Separates exiting Person [2] from entering passerby Person [3]"
+            "Temporal Majority Voting: Consistent class label 'handbag' from standard 60-object taxonomy"
         ]
     },
     "detected_entities_in_scene": [
@@ -227,11 +227,11 @@ prompt_payload = {
         "Output strictly valid JSON list of triplets: [{\"subject\": \"[ID]\", \"relation\": \"<verb>\", \"object\": \"[ID]\"}]."
     ),
     "vlm_user_prompt": (
-        f"Analyze the {NUM_VLM_FRAMES} sequential frames of this surveillance clip (44s to 52s). "
+        f"Analyze the {NUM_VLM_FRAMES} sequential frames of this surveillance clip. "
         f"Entities detected with visual marks: {list(tracked_entities.keys())}. "
-        f"1. Which relations from the 26 categories occur between persons (e.g. touch/hug)? "
-        f"2. Does any person interact with or abandon the bag [{STATIONARY_BAG_ID}] on the ground? "
-        f"Respond ONLY with a JSON array of triplets."
+        f"Identify all active relationships occurring between any pair of entities (Person-Person, Person-Object). "
+        f"Choose relations strictly from the provided 26 relation categories. "
+        'Respond ONLY with a JSON array of triplets: [{"subject": "[ID]", "relation": "<verb>", "object": "[ID]"}].'
     ),
     "ground_truth_triplet_labels": [
         {
@@ -245,12 +245,23 @@ prompt_payload = {
             "relation": "hug",
             "object": "[1]",
             "description": "Person [2] embraces Person [1] as they prepare to leave"
+        },
+        {
+            "subject": "[1]",
+            "relation": "get_off",
+            "object": "[4]",
+            "description": "Person [1] walks away, leaving the bag [4] behind on the floor"
         }
     ],
-    "abandoned_event_summary": {
-        "abandoned_entity": f"[{STATIONARY_BAG_ID}] {STATIONARY_BAG_CLASS}",
-        "initial_state": "Stationary on floor at (x~147, y~338)",
-        "final_state": "Abandoned - Both person [1] and [2] walked out of scene, bag remains unattended. Person [3] enters scene as passerby without interacting with bag."
+    "scene_event_summary": {
+        "primary_actors": ["[1] person", "[2] person"],
+        "unattended_entity": f"[{STATIONARY_BAG_ID}] {STATIONARY_BAG_CLASS}",
+        "passerby_entity": "[3] person",
+        "description": (
+            "Person [1] and [2] interact (touch, hug) and leave the scene through the door, "
+            "leaving handbag [4] stationary on the floor. "
+            "Passerby [3] enters the hall without interacting with [1], [2], or [4]."
+        )
     }
 }
 
@@ -258,4 +269,4 @@ with open(payload_path, "w", encoding="utf-8") as f:
     json.dump(prompt_payload, f, indent=4, ensure_ascii=False)
 
 print(f"Tuned Abandoned VLM Prompt Payload written to: {payload_path}")
-print("SUCCESS! TUNED ABANDONED OBJECT PIPELINE COMPLETED!")
+print("SUCCESS! TUNED VIDVRD PIPELINE COMPLETED!")

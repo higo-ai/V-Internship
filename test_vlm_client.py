@@ -35,7 +35,8 @@ def get_mock_triplets(payload_name):
     if "abandoned" in payload_name.lower():
         return [
             {"subject": "[1]", "relation": "touch", "object": "[2]"},
-            {"subject": "[2]", "relation": "hug", "object": "[1]"}
+            {"subject": "[2]", "relation": "hug", "object": "[1]"},
+            {"subject": "[1]", "relation": "get_off", "object": "[4]"}
         ]
     else:
         return [
