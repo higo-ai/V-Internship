@@ -220,21 +220,29 @@ prompt_payload = {
     "allowed_relations_vocabulary_26": relations_list,
     "visual_prompt_frames_sequence": sampled_frame_files,
     "vlm_system_prompt": (
-        "You are an advanced Video Visual Relation Detection AI for surveillance analytics. "
-        "You are given a sequential series of video frames with numbered visual marks [ID] identifying subjects and objects. "
-        "Your task is to detect all active relations between the marked entities over time. "
-        "STRICT CONSTRAINTS:\n" f"1. You MUST strictly choose relations ONLY from the allowed 26 categories: {relations_list}.\n" 
-        "Output strictly valid JSON list of triplets: [{\"subject\": \"[ID]\", \"relation\": \"<verb>\", \"object\": \"[ID]\"}]."
+        "You are an advanced Video Visual Relation Detection (VidVRD) AI for surveillance analytics. "
+        "You are given a temporal sequence of video frames with numbered visual marks [ID] identifying subjects and objects. "
+        "Your task is to detect all active visual relations occurring between the marked entities over time.\n\n"
+        "STRICT CONSTRAINTS:\n"
+        f"1. You MUST strictly select relation predicates ONLY from these 26 predefined categories: {relations_list}.\n"
+        "2. Output format MUST be strictly a valid JSON object matching this schema:\n"
+        "{\n"
+        '  "temporal_summary": "<brief 1-sentence description of overall interactions and movements across frames>",\n'
+        '  "triplets": [\n'
+        '    {\"subject\": \"[ID]\", \"relation\": \"<predicate>\", \"object\": \"[ID]\"}\n'
+        "  ]\n"
+        "}\n"
+        "3. DO NOT output any markdown code blocks, explanations, or conversational text. Output ONLY the raw JSON object."
     ),
     "vlm_user_prompt": (
-        f"Analyze the {NUM_VLM_FRAMES} sequential frames of this surveillance clip. "
-        f"Entities detected with visual marks: {sorted(list(tracked_entities.keys()))}. "
-        "You MUST perform a systematic pair-by-pair check across all frames:\n"
-        "- Step 1: Check ALL Person-Person pairs for interactions.\n"
-        "- Step 2: Check ALL Person-Object pairs for interactions.\n"
-        "CRITICAL: Do NOT stop after finding one relation. You must output multiple valid relations if they exist. "
-        "Choose relations strictly from the provided 26 relation categories. "
-        'Respond ONLY with a JSON array of triplets: [{"subject": "[ID]", "relation": "<verb>", "object": "[ID]"}].'
+        f"Analyze the {NUM_VLM_FRAMES} sequential frames of this surveillance video clip. "
+        f"Detected entities with visual marks: {', '.join([f'{mid} ({clabel})' for mid, clabel in sorted(tracked_entities.items())])}.\n"
+        "Perform a systematic pair-by-pair check across the full time duration:\n"
+        "- Examine all Person-Person interactions across frames.\n"
+        "- Examine all Person-Object interactions across frames.\n"
+        "First write a brief 1-sentence temporal_summary of observed actions, then list all detected relation triplets in the 'triplets' array. "
+        "Select predicates strictly from the allowed 26 categories. "
+        'Respond strictly with the JSON object: {\"temporal_summary\": \"...\", \"triplets\": [{\"subject\": \"[ID]\", \"relation\": \"<verb>\", \"object\": \"[ID]\"}]}.'
     ),
     "ground_truth_triplet_labels": [
         {
