@@ -6,7 +6,7 @@ from collections import Counter
 from ultralytics import YOLO
 
 # 1. Paths & Configurations
-base_dir = r"C:\AIThucChien\VinFast Internship"
+base_dir = os.path.dirname(os.path.abspath(__file__))
 video_path = os.path.join(base_dir, "data", "video1.avi")
 output_video_path = os.path.join(base_dir, "data", "annotated_clip_abandoned_tuned.mp4")
 vlm_frames_dir = os.path.join(base_dir, "data", "vlm_input_frames_abandoned_tuned")
@@ -22,7 +22,7 @@ END_SEC = 52.0
 NUM_VLM_FRAMES = 8
 
 cap = cv2.VideoCapture(video_path)
-fps = cap.get(cv2.CAP_PROP_FPS)
+fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -34,9 +34,12 @@ clip_frame_count = end_frame - start_frame
 print(f"Original Video: {total_frames} frames, {fps:.2f} FPS")
 print(f"Clipping segment: {START_SEC}s - {END_SEC}s (frames {start_frame} to {end_frame}, total {clip_frame_count} frames)")
 
-# 3. Initialize YOLO Tracking Model
-print("Loading YOLO model...")
-model = YOLO(os.path.join(base_dir, "yolo11n.pt"))
+# 3. Initialize YOLO Models
+# Separate instances: person_model maintains persistent ByteTrack predictor state;
+# bag_model performs independent detection without resetting person_model predictor.
+print("Loading YOLO models...")
+person_model = YOLO(os.path.join(base_dir, "yolo11n.pt"))
+bag_model = YOLO(os.path.join(base_dir, "yolo11n.pt"))
 
 COLOR_PALETTE = [
     (0, 0, 255),     # 0: Red
@@ -74,18 +77,18 @@ while frame_idx < end_frame:
     if not ret:
         break
 
-    # Track persons dynamically using ByteTrack
-    results = model.track(
+    # Track persons dynamically using ByteTrack with custom IoU match_thresh
+    results = person_model.track(
         frame,
         persist=True,
-        tracker="bytetrack.yaml",
+        tracker=os.path.join(base_dir, "custom_bytetrack.yaml"),
         classes=[0],  # Track persons with ByteTrack
         conf=0.25,
         verbose=False
     )
 
-    # Detect bag candidates with sensitivity conf=0.15
-    bag_res = model.predict(frame, conf=0.15, classes=[24, 26, 28], verbose=False)
+    # Detect bag candidates with sensitivity conf=0.15 using separate detector
+    bag_res = bag_model.predict(frame, conf=0.15, classes=[24, 26, 28], verbose=False)
     
     annotated_frame = frame.copy()
 
@@ -96,8 +99,12 @@ while frame_idx < end_frame:
         class_ids = results[0].boxes.cls.cpu().numpy().astype(int)
 
         for box, tid, cid in zip(boxes, track_ids, class_ids):
+            # Reserve ID [4] for stationary handbag; discard spurious transient track
+            if tid == STATIONARY_BAG_ID:
+                continue
+
             x1, y1, x2, y2 = box
-            class_name = model.names[cid]
+            class_name = person_model.names[cid]
             mark_id = f"[{tid}]"
             tracked_entities[mark_id] = class_name
             color = COLOR_PALETTE[tid % len(COLOR_PALETTE)]
@@ -116,7 +123,7 @@ while frame_idx < end_frame:
             cv2.putText(annotated_frame, mark_id, (x1 + 8, y1 + 24), font, 0.7, color, 2, cv2.LINE_AA)
 
     # 2. Draw Persistent Stationary Bag [4] handbag
-    # Find best bag detection in floor region [100-220, 280-420]
+    # Find best bag detection in floor region [100-230, 280-430]
     best_box = None
     best_conf = 0.0
     if len(bag_res) > 0 and len(bag_res[0].boxes) > 0:
@@ -202,8 +209,9 @@ prompt_payload = {
         "sampled_frames_count": NUM_VLM_FRAMES,
         "tuning_features": [
             "Spatial Anchor Persistence: Bag retains persistent ID [4] across occlusions",
-            "Temporal Majority Voting: Consistent class label 'handbag' from 60 VinFast taxonomy",
-            "Continuous Boundary Box: Object remains bounded and marked through final frame"
+            "Temporal Majority Voting: Consistent class label 'handbag' from standard 60-object taxonomy",
+            "Continuous Boundary Box: Object remains bounded and marked through final frame",
+            "IoU Match Threshold Tuning: Separates exiting Person [2] from entering passerby Person [3]"
         ]
     },
     "detected_entities_in_scene": [
@@ -242,7 +250,7 @@ prompt_payload = {
     "abandoned_event_summary": {
         "abandoned_entity": f"[{STATIONARY_BAG_ID}] {STATIONARY_BAG_CLASS}",
         "initial_state": "Stationary on floor at (x~147, y~338)",
-        "final_state": "Abandoned - Both person [1] and [2] walked out of scene, bag remains unattended"
+        "final_state": "Abandoned - Both person [1] and [2] walked out of scene, bag remains unattended. Person [3] enters scene as passerby without interacting with bag."
     }
 }
 

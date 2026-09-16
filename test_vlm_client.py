@@ -46,7 +46,7 @@ def get_mock_triplets(payload_name):
 
 def main():
     args = parse_args()
-    base_dir = r"C:\AIThucChien\VinFast Internship"
+    base_dir = os.path.dirname(os.path.abspath(__file__))
     payload_file = os.path.join(base_dir, args.payload) if not os.path.isabs(args.payload) else args.payload
 
     if not os.path.exists(payload_file):
@@ -54,7 +54,7 @@ def main():
         sys.exit(1)
 
     print("=" * 60)
-    print("VINFAST COMPUTER VISION CENTER - VLM INFERENCE CLIENT")
+    print("COMPUTER VISION CENTER - VLM INFERENCE CLIENT")
     print("=" * 60)
     print(f"Loading payload from: {payload_file}")
 
@@ -150,7 +150,7 @@ def main():
             triplets = get_mock_triplets(args.payload)
     else:
         print("\n[MOCK MODE] Simulating Qwen2-VL-2B inference on Set-of-Marks prompt...")
-        print("(Pass --server-url <IP:PORT> to connect to real VinFast server)")
+        print("(Pass --server-url <IP:PORT> to connect to real server)")
         triplets = get_mock_triplets(args.payload)
 
     # Validate output triplets
@@ -173,7 +173,7 @@ def main():
 
     print("-" * 60)
     if all_valid:
-        print("[CHECK PASSED] All predicted relations strictly adhere to VinFast 26 taxonomy!")
+        print("[CHECK PASSED] All predicted relations strictly adhere to standard 26 taxonomy!")
     else:
         print("[CHECK WARNING] Some relations fall outside the 26 allowed vocabulary.")
 
