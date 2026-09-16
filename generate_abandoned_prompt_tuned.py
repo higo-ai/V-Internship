@@ -229,8 +229,11 @@ prompt_payload = {
     "vlm_user_prompt": (
         f"Analyze the {NUM_VLM_FRAMES} sequential frames of this surveillance clip. "
         f"Entities detected with visual marks: {sorted(list(tracked_entities.keys()))}. "
-        f"Identify all active relationships occurring between any pair of entities (Person-Person, Person-Object). "
-        f"Choose relations strictly from the provided 26 relation categories. "
+        "You MUST perform a systematic pair-by-pair check across all frames:\n"
+        "- Step 1: Check ALL Person-Person pairs for interactions.\n"
+        "- Step 2: Check ALL Person-Object pairs for interactions.\n"
+        "CRITICAL: Do NOT stop after finding one relation. You must output multiple valid relations if they exist. "
+        "Choose relations strictly from the provided 26 relation categories. "
         'Respond ONLY with a JSON array of triplets: [{"subject": "[ID]", "relation": "<verb>", "object": "[ID]"}].'
     ),
     "ground_truth_triplet_labels": [
