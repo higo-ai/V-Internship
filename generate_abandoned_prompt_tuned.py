@@ -392,11 +392,10 @@ prompt_payload = {
         "CRITICAL INSTRUCTION: First, write a temporal_summary describing the progression of actions across time from early frames to late frames. "
         "In this summary, explicitly state the physical location of any inanimate objects across the frames (e.g., whether an object remains stationary on the floor and whether persons move away from it). "
         "Do NOT invent actions not visible in the frames (if an object remains on the floor in the final frames, it has NOT been picked up).\n\n"
-        "CLOSED-VOCABULARY MAPPING CONSTRAINT: In the 'relation' field of each triplet, you MUST select predicates strictly from the allowed 26 categories:\n"
-        "- When a person moves away leaving an entity resting on the floor: you MUST select 'get_off' (never output 'leave').\n"
-        "- When a person merely walks past an object or person without physical contact: DO NOT create a triplet (never output 'walk').\n"
-        "- Never output words outside the 26 allowed categories (such as 'walk', 'leave', or 'pick_up').\n"
-        f"Allowed 26 predicates: {relations_list}.\n\n"
+        "PREDEFINED RELATION TAXONOMY (CLOSED VOCABULARY):\n"
+        f"Every predicate in the 'relation' field MUST be an exact string match selected strictly from the 26 allowed categories: {relations_list}. All out-of-vocabulary verbs are strictly prohibited.\n"
+        "- To denote a person releasing, departing from, or leaving an entity stationary, use 'get_off'.\n"
+        "- If two entities have no physical contact or active interaction, omit that pair entirely (do not predict any relation).\n\n"
         'Respond strictly with the JSON object: {"temporal_summary": "...", "triplets": [{"subject": "[ID]", "relation": "<verb>", "object": "[ID]", "reason": "..."}]}.'
     ),
     "ground_truth_triplet_labels": [
