@@ -160,24 +160,25 @@ def main():
         triplets = get_mock_triplets(args.payload)
 
     # Validate output triplets
-    print("\n" + "=" * 60)
-    print("INFERENCE RESULT: PREDICTED VISUAL RELATION TRIPLETS")
-    print("=" * 60)
-    print(f"{'Subject':<12} | {'Relation':<18} | {'Object':<12} | {'Vocabulary Valid'}")
-    print("-" * 60)
+    print("\n" + "=" * 80)
+    print("INFERENCE RESULT: PREDICTED VISUAL RELATION TRIPLETS + REASONING")
+    print("=" * 80)
+    print(f"{'Subject':<10} | {'Relation':<16} | {'Object':<10} | {'Valid':<10} | Reason / Explanation")
+    print("-" * 80)
 
     all_valid = True
     for t in triplets:
         sub = t.get("subject", "")
         rel = t.get("relation", "")
         obj = t.get("object", "")
+        reason = t.get("reason", "N/A")
         is_rel_valid = rel in allowed_relations
         if not is_rel_valid:
             all_valid = False
-        valid_mark = "[OK] Valid" if is_rel_valid else "[X] Invalid"
-        print(f"{sub:<12} | {rel:<18} | {obj:<12} | {valid_mark}")
+        valid_mark = "[OK]" if is_rel_valid else "[X] Invalid"
+        print(f"{sub:<10} | {rel:<16} | {obj:<10} | {valid_mark:<10} | {reason}")
 
-    print("-" * 60)
+    print("-" * 80)
     if all_valid:
         print("[CHECK PASSED] All predicted relations strictly adhere to standard 26 taxonomy!")
     else:
