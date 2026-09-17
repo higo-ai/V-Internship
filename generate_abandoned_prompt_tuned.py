@@ -243,7 +243,7 @@ prompt_payload = {
         "4. DO NOT output any markdown code blocks, explanations, or conversational text. Output ONLY the raw JSON object."
     ),
     "vlm_user_prompt": (
-        f"Analyze the {NUM_VLM_FRAMES} sequential frames of this surveillance video clip. "
+        "Analyze all provided sequential frames of this surveillance video clip. "
         f"Detected entities with visual marks: {', '.join([f'{mid} ({clabel})' for mid, clabel in sorted(tracked_entities.items())])}.\n"
         "Perform a systematic pair-by-pair check across the full time duration:\n"
         "- Examine all Person-Person interactions across frames.\n"
