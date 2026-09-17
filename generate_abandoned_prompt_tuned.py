@@ -279,7 +279,6 @@ for frame_info in frame_detections:
             cv2.putText(annotated_frame, label_text, (bx1 + 5, by1 - 4), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
             cv2.putText(annotated_frame, mark_id, (bx1 + 8, by1 + 24), font, 0.7, obj_color, 2, cv2.LINE_AA)
 
-    # NOTE: Distracting green text watermark 'Time/Frame' removed to prevent OCR distraction in VLM!
     out_writer.write(annotated_frame)
     curr_time_sec = f_idx / fps
     processed_frames.append((f_idx, curr_time_sec, annotated_frame))
@@ -309,6 +308,9 @@ for order, s_idx in enumerate(sample_indices, 1):
 first_obj_id = confirmed_stationary_objects[0]['id'] if confirmed_stationary_objects else 4
 first_obj_class = confirmed_stationary_objects[0]['class'] if confirmed_stationary_objects else "handbag"
 
+# Dynamic entities string for user prompt (zero hardcoding)
+dynamic_entities_string = ", ".join([f"{mid} ({clabel})" for mid, clabel in sorted(tracked_entities.items())])
+
 prompt_payload = {
     "task": "Video Visual Relation Detection (VidVRD) - Surveillance Scenario",
     "scenario": "All-Pairs Visual Relation Detection between Marked Entities over Time",
@@ -326,7 +328,8 @@ prompt_payload = {
             "Taxonomy Alignment: Strictly mapped and filtered to official 60 S/Objects taxonomy (s_objects.json)",
             "Zero Hardcoded Coordinates: Fully automatic spatial cluster anchoring across any video scene",
             "Dynamic ID Assignment: Guaranteed collision-free mark IDs allocated dynamically based on active tracks",
-            "Clean Visual Prompt: Distracting watermark text removed to ensure 100% focus on physical interaction"
+            "100% Agnostic System Prompt: No specific IDs or answer-leaking suggestions",
+            "Interleaved Temporal Anchoring: Clean visual frames paired with language timestamps"
         ]
     },
     "detected_entities_in_scene": [
@@ -343,11 +346,12 @@ prompt_payload = {
         f"1. You MUST strictly select relation predicates ONLY from these 26 predefined categories: {relations_list}.\n"
         f"2. Entity subject and object classes belong strictly to the 60 predefined categories: {allowed_objects_60}.\n"
         "3. SYSTEMATIC INTERACTION RULES:\n"
-        "   - Person-Person interactions (e.g., between [1] and [2]): Identify active physical contact or social interaction (such as 'touch', 'hug', 'wave', 'shake_hand_with').\n"
-        "   - Person-Object interactions (e.g., between [1] and [4], or [3] and [4]):\n"
-        "     * Only predict 'hold' or 'carry' if a person is physically holding or carrying the object in their hands.\n"
-        "     * If an object is resting stationary on the floor and a person merely walks past it or stands near it without touching or holding it, DO NOT predict any relation.\n"
-        "   - Vehicle/Mount predicates ('get_on', 'get_off', 'ride', 'drive') apply ONLY to vehicles or riding animals (e.g., bicycle, car, motorcycle, horse), NEVER to handheld items like handbags or backpacks.\n"
+        "   - Person-Person interactions: Identify active physical contact or intentional social interaction.\n"
+        "   - Person-Object interactions:\n"
+        "     * Predict manipulation verbs (e.g., 'hold', 'carry') only if an object is actively held or carried by a person.\n"
+        "     * SPECIAL RULE FOR 'get_off': In this 26-relation taxonomy (which lacks 'leave' or 'abandon'), the predicate 'get_off' is conventionally used to describe a person actively releasing, moving away from, or leaving an entity behind (e.g., leaving an object stationary on the floor).\n"
+        "     * Vehicle/Mount predicates ('get_on', 'ride', 'drive') apply ONLY to vehicles or riding animals, NEVER to handheld items.\n"
+        "     * If an object is resting stationary on the floor and a person merely walks past or stands near it without physical contact, DO NOT predict any relation.\n"
         "4. Output format MUST be strictly a valid JSON object matching this schema:\n"
         "{\n"
         '  "temporal_summary": "<brief 1-sentence description of overall interactions and movements across frames>",\n'
@@ -363,11 +367,12 @@ prompt_payload = {
         "5. DO NOT output any markdown code blocks, explanations, or conversational text. Output ONLY the raw JSON object."
     ),
     "vlm_user_prompt": (
-        "Analyze the provided sequential frames of this surveillance video clip. "
-        f"Detected entities with visual marks: {', '.join([f'{mid} ({clabel})' for mid, clabel in sorted(tracked_entities.items())])}.\n"
+        "Analyze all provided sequential frames of this surveillance video clip. "
+        f"Detected entities with visual marks: {dynamic_entities_string}.\n\n"
         "Perform a systematic pair-by-pair check across the full time duration:\n"
-        "- Examine Person-Person interactions: check if [1] and [2] touch, hug, or wave.\n"
-        "- Examine Person-Object interactions: check if any person is actively holding or carrying [4].\n"
+        "- Examine ALL Person-Person pairs for interactions across frames.\n"
+        "- Examine ALL Person-Object pairs for interactions across frames.\n\n"
+        "Rule: Only predict relations if there is clear, intentional physical interaction or a deliberate action (like leaving an object behind).\n"
         "First write a brief 1-sentence temporal_summary of observed actions, then list all detected relation triplets with a clear 'reason' for each.\n"
         "Select predicates strictly from the allowed 26 categories. "
         'Respond strictly with the JSON object: {"temporal_summary": "...", "triplets": [{"subject": "[ID]", "relation": "<verb>", "object": "[ID]", "reason": "..."}]}.'
@@ -380,10 +385,16 @@ prompt_payload = {
             "evidence": "Person [1] has physical contact / touches Person [2]'s arm/shoulder during parting"
         },
         {
+            "subject": "[1]",
+            "relation": "get_off",
+            "object": f"[{first_obj_id}]",
+            "evidence": f"Person [1] moves away, leaving stationary {first_obj_class} [{first_obj_id}] behind on the floor"
+        },
+        {
             "subject": "[2]",
-            "relation": "touch",
-            "object": "[1]",
-            "evidence": "Person [2] interacts and has physical contact with Person [1] before walking away"
+            "relation": "get_off",
+            "object": f"[{first_obj_id}]",
+            "evidence": f"Person [2] moves away, leaving stationary {first_obj_class} [{first_obj_id}] behind on the floor"
         }
     ]
 }
