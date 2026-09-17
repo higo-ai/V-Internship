@@ -362,7 +362,7 @@ prompt_payload = {
         "   - Negative Pairs: If an object is resting stationary on the floor and a person merely walks past or approaches without physical contact, DO NOT predict any relation.\n"
         "4. Output format MUST be strictly a valid JSON object matching this schema:\n"
         "{\n"
-        '  "temporal_summary": "<brief 1-sentence description of overall interactions and movements across frames, explicitly stating the physical location of any inanimate objects>",\n'
+        '  "temporal_summary": "<brief description of the progression of actions from early to late frames, explicitly noting any changes in the physical location or state of inanimate objects>",\n'
         '  "triplets": [\n'
         '    {\n'
         '      "subject": "[ID]",\n'
@@ -380,7 +380,7 @@ prompt_payload = {
         "Perform a systematic pair-by-pair check across the full time duration:\n"
         "- Examine ALL Person-Person combinations.\n"
         "- Examine ALL Person-Object combinations.\n\n"
-        "CRITICAL INSTRUCTION: First, write a brief 1-sentence temporal_summary of observed actions. In this summary, you MUST explicitly describe the physical location of any inanimate objects (e.g., state clearly if the object is being held by someone, or if it is resting stationary on the floor).\n"
+        "CRITICAL INSTRUCTION: First, write a temporal_summary describing the progression of actions across time from early frames to late frames. In this summary, you MUST explicitly describe how the physical state and location of any inanimate objects change over time (e.g., whether an object is initially held and later left resting on the floor, and where the persons move).\n"
         "Then, list all detected relation triplets with a clear 'reason' for each.\n"
         "Select predicates strictly from the allowed 26 categories. "
         'Respond strictly with the JSON object: {"temporal_summary": "...", "triplets": [{"subject": "[ID]", "relation": "<verb>", "object": "[ID]", "reason": "..."}]}.'

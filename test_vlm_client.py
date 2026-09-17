@@ -35,6 +35,7 @@ def get_mock_triplets(payload_name):
     if "abandoned" in payload_name.lower():
         return [
             {"subject": "[1]", "relation": "touch", "object": "[2]", "reason": "Person [1] touches Person [2] arm/shoulder during conversation"},
+            {"subject": "[2]", "relation": "hold", "object": "[4]", "reason": "Person [2] holds handbag [4] in early frames before setting it down"},
             {"subject": "[1]", "relation": "get_off", "object": "[4]", "reason": "Person [1] moves away, leaving stationary handbag [4] behind on the floor"},
             {"subject": "[2]", "relation": "get_off", "object": "[4]", "reason": "Person [2] moves away, leaving stationary handbag [4] behind on the floor"}
         ]
