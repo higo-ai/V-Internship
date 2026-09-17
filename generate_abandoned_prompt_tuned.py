@@ -16,6 +16,28 @@ payload_path = os.path.join(base_dir, "vlm_prompt_payload_abandoned_tuned.json")
 os.makedirs(vlm_frames_dir, exist_ok=True)
 os.makedirs(artifact_dir, exist_ok=True)
 
+# Load official project taxonomies (60 S/Objects and 26 Relations)
+with open(os.path.join(base_dir, "s_objects.json"), encoding="utf-8") as f:
+    allowed_objects_60 = json.load(f)
+    allowed_objects_set = set(allowed_objects_60)
+
+with open(os.path.join(base_dir, "relations.json"), encoding="utf-8") as f:
+    relations_list = json.load(f)
+
+# Taxonomy alignment: map COCO-80 classes to official 60 s_objects
+COCO_TO_S_OBJECTS = {
+    "person": "person", "bicycle": "bicycle", "car": "car", "motorcycle": "motorcycle",
+    "bus": "bus", "train": "train", "truck": "truck", "traffic light": "traffic_light",
+    "stop sign": "stop_sign", "bench": "bench", "bird": "bird", "cat": "cat",
+    "dog": "dog", "horse": "horse", "sheep": "sheep", "cow": "cattle",
+    "backpack": "backpack", "handbag": "handbag", "suitcase": "suitcase",
+    "sports ball": "ball", "baseball bat": "bat", "tennis racket": "racket",
+    "bottle": "bottle", "cup": "cup", "chair": "chair", "couch": "sofa",
+    "dining table": "table", "toilet": "toilet", "tv": "screen", "laptop": "laptop",
+    "cell phone": "cellphone", "microwave": "microwave", "oven": "oven",
+    "sink": "sink", "refrigerator": "refrigerator", "cake": "cake", "skateboard": "skateboard"
+}
+
 # 2. Golden segment for Abandoned Object: seconds 44.0 to 52.0 (8.0 seconds, 240 frames)
 START_SEC = 44.0
 END_SEC = 52.0
@@ -33,6 +55,7 @@ clip_frame_count = end_frame - start_frame
 
 print(f"Original Video: {total_frames} frames, {fps:.2f} FPS")
 print(f"Clipping segment: {START_SEC}s - {END_SEC}s (frames {start_frame} to {end_frame}, total {clip_frame_count} frames)")
+print(f"Project Taxonomies loaded: {len(allowed_objects_60)} S/Objects, {len(relations_list)} Relations")
 
 # 3. Initialize YOLO Models
 print("Loading YOLO models (local weights yolo11n.pt)...")
@@ -59,13 +82,13 @@ if not out_writer.isOpened():
 
 # Static room fixtures / furniture that are part of scene architecture (not portable objects)
 STATIC_FIXTURE_CLASSES = {
-    "dining table", "bench", "chair", "refrigerator", "couch", "bed",
-    "toilet", "sink", "microwave", "oven", "tv"
+    "table", "bench", "chair", "refrigerator", "sofa", "bed",
+    "toilet", "sink", "microwave", "oven", "screen"
 }
 
 # ==============================================================================
-# PASS 1: Generalized Dynamic Tracking & Spatial Velocity Clustering
-# Zero Hardcoded Classes, Zero Hardcoded Coordinates, Zero Static IDs
+# PASS 1: Dynamic Tracking & Spatial Velocity Clustering
+# Zero Hardcoding, Strictly Enforced 60 S/Objects Taxonomy
 # ==============================================================================
 print("\n--- Pass 1: Extracting Dynamic Person Tracks & Spatial Object Clusters ---")
 cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
@@ -89,7 +112,7 @@ for f_idx in range(start_frame, end_frame):
         verbose=False
     )
 
-    # Detect all non-person objects across entire COCO 80 categories (zero hardcoded class filter)
+    # Detect all non-person objects across COCO (all non-zero classes)
     obj_res = detector_model.predict(
         frame,
         conf=0.15,
@@ -105,9 +128,9 @@ for f_idx in range(start_frame, end_frame):
         cids = results[0].boxes.cls.cpu().numpy().astype(int)
         for b, tid, cid in zip(boxes, tids, cids):
             person_track_hits[tid] += 1
-            p_data.append((b, tid, tracker_model.names[cid]))
+            p_data.append((b, tid, "person"))
 
-    # Collect object detections and cluster stationary candidates
+    # Collect object detections and cluster stationary candidates (strictly mapped to 60 s_objects)
     o_data = []
     if len(obj_res) > 0 and len(obj_res[0].boxes) > 0:
         boxes = obj_res[0].boxes.xyxy.cpu().numpy()
@@ -115,10 +138,15 @@ for f_idx in range(start_frame, end_frame):
         confs = obj_res[0].boxes.conf.cpu().numpy()
 
         for b, cid, conf in zip(boxes, clss, confs):
+            coco_name = detector_model.names[cid]
+            # Map COCO category to official 60 s_objects vocabulary
+            s_obj_name = COCO_TO_S_OBJECTS.get(coco_name)
+            if not s_obj_name or s_obj_name not in allowed_objects_set:
+                continue  # Exclude any category outside official 60 s_objects
+
             cx = (b[0] + b[2]) / 2.0
             cy = (b[1] + b[3]) / 2.0
-            c_name = detector_model.names[cid]
-            o_data.append((b.astype(int), c_name, conf))
+            o_data.append((b.astype(int), s_obj_name, conf))
 
             # Spatial association: match against running cluster center (dist < 40px)
             matched = False
@@ -128,7 +156,7 @@ for f_idx in range(start_frame, end_frame):
                 if np.hypot(cx - avg_cx, cy - avg_cy) < 40.0:
                     cl['history'].append((cx, cy))
                     cl['boxes'].append(b)
-                    cl['classes'].append(c_name)
+                    cl['classes'].append(s_obj_name)
                     cl['confs'].append(float(conf))
                     cl['frame_indices'].append(f_idx)
                     matched = True
@@ -138,7 +166,7 @@ for f_idx in range(start_frame, end_frame):
                 stationary_clusters.append({
                     'history': [(cx, cy)],
                     'boxes': [b],
-                    'classes': [c_name],
+                    'classes': [s_obj_name],
                     'confs': [float(conf)],
                     'frame_indices': [f_idx]
                 })
@@ -155,7 +183,7 @@ print(f"Stable person tracks detected (hits >= 10): {sorted(stable_person_ids)}"
 
 # Automatically detect confirmed stationary objects:
 # Criteria: persistent (hits >= 30 frames) AND velocity near zero (std(cx) < 10.0 and std(cy) < 10.0)
-# Excludes static room fixtures (refrigerator, table) to focus on portable unattended objects
+# Excludes static room fixtures (table, refrigerator) to focus on portable unattended objects
 confirmed_stationary_objects = []
 max_person_id = max(stable_person_ids) if stable_person_ids else 0
 next_entity_id = max_person_id + 1
@@ -185,7 +213,7 @@ for cluster in stationary_clusters:
                 'hits': hits,
                 'std': (cx_std, cy_std)
             })
-            print(f"Confirmed Stationary Object: ID=[{next_entity_id}], class='{majority_class}', hits={hits}, std=({cx_std:.1f}, {cy_std:.1f}), box={avg_box.tolist()}")
+            print(f"Confirmed Stationary Object: ID=[{next_entity_id}], class='{majority_class}' (from 60 s_objects), hits={hits}, std=({cx_std:.1f}, {cy_std:.1f}), box={avg_box.tolist()}")
             next_entity_id += 1
 
 # ==============================================================================
@@ -255,7 +283,7 @@ for frame_info in frame_detections:
 
     # Watermark
     curr_time_sec = f_idx / fps
-    time_badge = f"Time: {curr_time_sec:.2f}s | Frame: {f_idx} (Zero Hardcode)"
+    time_badge = f"Time: {curr_time_sec:.2f}s | Frame: {f_idx} (Taxonomy Aligned)"
     cv2.putText(annotated_frame, time_badge, (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
 
     out_writer.write(annotated_frame)
@@ -282,11 +310,7 @@ for order, s_idx in enumerate(sample_indices, 1):
     sampled_frame_files.append(fn)
     print(f"  [Frame {order}/{NUM_VLM_FRAMES}] Saved: {fn} (idx {s_idx}, sec {f_sec:.2f}s)")
 
-# 5. Load 26 relations dictionary
-with open(os.path.join(base_dir, "relations.json"), encoding="utf-8") as f:
-    relations_list = json.load(f)
-
-# 6. Generate Tuned VLM Prompt Payload (Generalized VidVRD Format)
+# 5. Generate Tuned VLM Prompt Payload (Generalized VidVRD Format)
 first_obj_id = confirmed_stationary_objects[0]['id'] if confirmed_stationary_objects else 4
 first_obj_class = confirmed_stationary_objects[0]['class'] if confirmed_stationary_objects else "handbag"
 
@@ -304,7 +328,7 @@ prompt_payload = {
         "tuning_features": [
             "Decoupled YOLO Architecture: tracker_model (ByteTrack) and detector_model (Object Detection)",
             "Dynamic Spatial Velocity Clustering: Detects stationary objects via zero displacement variance (std < 10px, hits >= 30)",
-            "Zero Hardcoded Classes: Open-vocabulary detection across all 79 COCO non-person object categories",
+            "Taxonomy Alignment: Strictly mapped and filtered to official 60 S/Objects taxonomy (s_objects.json)",
             "Zero Hardcoded Coordinates: Fully automatic spatial cluster anchoring across any video scene",
             "Dynamic ID Assignment: Guaranteed collision-free mark IDs allocated dynamically based on active tracks"
         ]
@@ -312,6 +336,7 @@ prompt_payload = {
     "detected_entities_in_scene": [
         {"mark_id": mid, "class_label": clabel} for mid, clabel in sorted(tracked_entities.items())
     ],
+    "allowed_objects_vocabulary_60": allowed_objects_60,
     "allowed_relations_vocabulary_26": relations_list,
     "visual_prompt_frames_sequence": sampled_frame_files,
     "vlm_system_prompt": (
@@ -320,10 +345,11 @@ prompt_payload = {
         "Your task is to detect all active visual relations occurring between the marked entities over time.\n\n"
         "STRICT CONSTRAINTS:\n"
         f"1. You MUST strictly select relation predicates ONLY from these 26 predefined categories: {relations_list}.\n"
-        "2. SEMANTIC AFFORDANCE & ROLE RULES:\n"
+        f"2. Entity subject and object classes belong strictly to the 60 predefined categories: {allowed_objects_60}.\n"
+        "3. SEMANTIC AFFORDANCE & ROLE RULES:\n"
         "   - Inanimate objects (such as handbag, backpack) CANNOT be the subject of action verbs (e.g., a handbag cannot 'hold' or 'carry' a human). Only persons can hold or carry objects.\n"
         "   - If a person merely walks past an entity without physical contact or purposeful interaction, DO NOT predict relations (do NOT predict get_on/touch).\n"
-        "3. Output format MUST be strictly a valid JSON object matching this schema:\n"
+        "4. Output format MUST be strictly a valid JSON object matching this schema:\n"
         "{\n"
         '  "temporal_summary": "<brief 1-sentence description of overall interactions and movements across frames>",\n'
         '  "triplets": [\n'
@@ -335,7 +361,7 @@ prompt_payload = {
         '    }\n'
         "  ]\n"
         "}\n"
-        "4. DO NOT output any markdown code blocks, explanations, or conversational text. Output ONLY the raw JSON object."
+        "5. DO NOT output any markdown code blocks, explanations, or conversational text. Output ONLY the raw JSON object."
     ),
     "vlm_user_prompt": (
         "Analyze all provided sequential frames of this surveillance video clip. "
