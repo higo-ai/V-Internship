@@ -22,7 +22,7 @@ def parse_args():
         "--server-url",
         type=str,
         default="http://10.x.x.x:8000/v1/chat/completions",
-        help="URL of served Qwen3.5-2B model endpoint"
+        help="URL of served Qwen2.5-VL-3B-Instruct model endpoint"
     )
     parser.add_argument(
         "--mock",
@@ -36,7 +36,7 @@ def get_mock_triplets(payload_name):
         return [
             {"subject": "[1]", "relation": "touch", "object": "[2]", "reason": "Person [1] puts arm around Person [2] shoulder"},
             {"subject": "[2]", "relation": "hug", "object": "[1]", "reason": "Person [2] embraces Person [1] as they converse"},
-            {"subject": "[1]", "relation": "get_off", "object": "[4]", "reason": "Person [1] walks away, leaving handbag [4] stationary on the floor"}
+            {"subject": "[2]", "relation": "touch", "object": "[1]", "reason": "Person [2] interacts and has physical contact with Person [1] before walking away"}
         ]
     else:
         return [
@@ -63,7 +63,7 @@ def main():
         payload = json.load(f)
 
     task_name = payload.get("task", "VidVRD Task")
-    target_model = payload.get("model_target", "Qwen3.5-2B")
+    target_model = payload.get("model_target", "Qwen2.5-VL-3B-Instruct")
     frames_seq = payload.get("visual_prompt_frames_sequence", [])
     allowed_relations = payload.get("allowed_relations_vocabulary_26", [])
     system_prompt = payload.get("vlm_system_prompt", "")
@@ -155,7 +155,7 @@ def main():
             print("[FALLBACK] Switching to Mock verification to validate pipeline parsing...")
             triplets = get_mock_triplets(args.payload)
     else:
-        print("\n[MOCK MODE] Simulating Qwen3.5-2B inference on Set-of-Marks prompt...")
+        print("\n[MOCK MODE] Simulating Qwen2.5-VL-3B-Instruct inference on Set-of-Marks prompt...")
         print("(Pass --server-url <IP:PORT> to connect to real server)")
         triplets = get_mock_triplets(args.payload)
 
