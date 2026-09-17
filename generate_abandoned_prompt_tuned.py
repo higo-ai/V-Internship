@@ -199,7 +199,7 @@ with open(os.path.join(base_dir, "relations.json"), encoding="utf-8") as f:
 prompt_payload = {
     "task": "Video Visual Relation Detection (VidVRD) - Surveillance Scenario",
     "scenario": "All-Pairs Visual Relation Detection between Marked Entities over Time",
-    "model_target": "Qwen2-VL-2B-Instruct",
+    "model_target": "Qwen/Qwen3.5-2B",
     "clip_info": {
         "source_video": "video1.avi",
         "clip_duration_seconds": END_SEC - START_SEC,
@@ -225,14 +225,22 @@ prompt_payload = {
         "Your task is to detect all active visual relations occurring between the marked entities over time.\n\n"
         "STRICT CONSTRAINTS:\n"
         f"1. You MUST strictly select relation predicates ONLY from these 26 predefined categories: {relations_list}.\n"
-        "2. Output format MUST be strictly a valid JSON object matching this schema:\n"
+        "2. SEMANTIC AFFORDANCE & ROLE RULES:\n"
+        "   - Inanimate objects (such as handbag, backpack) CANNOT be the subject of action verbs (e.g., a handbag cannot 'hold' or 'carry' a human). Only persons can hold or carry objects.\n"
+        "   - If a person merely walks past an entity without physical contact or purposeful interaction, DO NOT predict relations (do NOT predict get_on/touch).\n"
+        "3. Output format MUST be strictly a valid JSON object matching this schema:\n"
         "{\n"
         '  "temporal_summary": "<brief 1-sentence description of overall interactions and movements across frames>",\n'
         '  "triplets": [\n'
-        '    {\"subject\": \"[ID]\", \"relation\": \"<predicate>\", \"object\": \"[ID]\"}\n'
+        '    {\n'
+        '      "subject": "[ID]",\n'
+        '      "relation": "<predicate>",\n'
+        '      "object": "[ID]",\n'
+        '      "reason": "<brief explanation of why this relation is selected based on visual evidence>"\n'
+        '    }\n'
         "  ]\n"
         "}\n"
-        "3. DO NOT output any markdown code blocks, explanations, or conversational text. Output ONLY the raw JSON object."
+        "4. DO NOT output any markdown code blocks, explanations, or conversational text. Output ONLY the raw JSON object."
     ),
     "vlm_user_prompt": (
         f"Analyze the {NUM_VLM_FRAMES} sequential frames of this surveillance video clip. "
@@ -240,9 +248,10 @@ prompt_payload = {
         "Perform a systematic pair-by-pair check across the full time duration:\n"
         "- Examine all Person-Person interactions across frames.\n"
         "- Examine all Person-Object interactions across frames.\n"
-        "First write a brief 1-sentence temporal_summary of observed actions, then list all detected relation triplets in the 'triplets' array. "
+        "Remember: Inanimate objects cannot hold humans, and walking past is not get_on.\n"
+        "First write a brief 1-sentence temporal_summary of observed actions, then list all detected relation triplets with a 'reason' for each.\n"
         "Select predicates strictly from the allowed 26 categories. "
-        'Respond strictly with the JSON object: {\"temporal_summary\": \"...\", \"triplets\": [{\"subject\": \"[ID]\", \"relation\": \"<verb>\", \"object\": \"[ID]\"}]}.'
+        'Respond strictly with the JSON object: {"temporal_summary": "...", "triplets": [{"subject": "[ID]", "relation": "<verb>", "object": "[ID]", "reason": "..."}]}.'
     ),
     "ground_truth_triplet_labels": [
         {
