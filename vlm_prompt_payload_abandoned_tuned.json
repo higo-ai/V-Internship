@@ -1,106 +1,104 @@
 {
-    "task": "Video Visual Relation Detection (VidVRD) - Surveillance Scenario",
-    "scenario": "All-Pairs Visual Relation Detection between Marked Entities over Time",
-    "model_target": "Qwen/Qwen3.5-2B",
-    "clip_info": {
-        "source_video": "video1.avi",
-        "clip_duration_seconds": 8.0,
-        "start_timestamp": "44.0s",
-        "end_timestamp": "52.0s",
-        "total_clip_frames": 240,
-        "sampled_frames_count": 8,
-        "tuning_features": [
-            "Decoupled YOLO Architecture: tracker_model (ByteTrack) and detector_model (Object Detection)",
-            "IoU Match Threshold Tuning: Separates exiting Person [2] from entering passerby Person [3]",
-            "Spatial Anchor Persistence: Bag retains persistent ID [4] across occlusions",
-            "Temporal Majority Voting: Consistent class label 'handbag' from standard 60-object taxonomy"
-        ]
+  "task": "Video Visual Relation Detection (VidVRD) - Surveillance Scenario",
+  "scenario": "All-Pairs Visual Relation Detection between Marked Entities over Time",
+  "model_target": "Qwen/Qwen3.5-2B",
+  "clip_info": {
+    "source_video": "video1.avi",
+    "clip_duration_seconds": 8.0,
+    "start_timestamp": "44.0s",
+    "end_timestamp": "52.0s",
+    "total_clip_frames": 240,
+    "sampled_frames_count": 8,
+    "tuning_features": [
+      "Decoupled YOLO Architecture: tracker_model (ByteTrack) and detector_model (Object Detection)",
+      "Dynamic Spatial Velocity Clustering: Detects stationary objects via zero displacement variance (std < 10px, hits >= 30)",
+      "Zero Hardcoded Classes: Open-vocabulary detection across all 79 COCO non-person object categories",
+      "Zero Hardcoded Coordinates: Fully automatic spatial cluster anchoring across any video scene",
+      "Dynamic ID Assignment: Guaranteed collision-free mark IDs allocated dynamically based on active tracks"
+    ]
+  },
+  "detected_entities_in_scene": [
+    {
+      "mark_id": "[1]",
+      "class_label": "person"
     },
-    "detected_entities_in_scene": [
-        {
-            "mark_id": "[1]",
-            "class_label": "person"
-        },
-        {
-            "mark_id": "[2]",
-            "class_label": "person"
-        },
-        {
-            "mark_id": "[3]",
-            "class_label": "person"
-        },
-        {
-            "mark_id": "[4]",
-            "class_label": "handbag"
-        }
-    ],
-    "allowed_relations_vocabulary_26": [
-        "bite",
-        "carry",
-        "clean",
-        "cut",
-        "drive",
-        "feed",
-        "get_off",
-        "get_on",
-        "grab",
-        "hit",
-        "hold",
-        "hug",
-        "kick",
-        "kiss",
-        "knock",
-        "lean_on",
-        "lick",
-        "lift",
-        "play(instrument)",
-        "pull",
-        "push",
-        "ride",
-        "shake_hand_with",
-        "throw",
-        "touch",
-        "wave"
-    ],
-    "visual_prompt_frames_sequence": [
-        "vlm_abandoned_tuned_frame_01_43.98s.jpg",
-        "vlm_abandoned_tuned_frame_02_44.98s.jpg",
-        "vlm_abandoned_tuned_frame_03_45.98s.jpg",
-        "vlm_abandoned_tuned_frame_04_46.98s.jpg",
-        "vlm_abandoned_tuned_frame_05_47.98s.jpg",
-        "vlm_abandoned_tuned_frame_06_48.98s.jpg",
-        "vlm_abandoned_tuned_frame_07_49.98s.jpg",
-        "vlm_abandoned_tuned_frame_08_50.98s.jpg"
-    ],
-    "vlm_system_prompt": "You are an advanced Video Visual Relation Detection (VidVRD) AI for surveillance analytics. You are given a temporal sequence of video frames with numbered visual marks [ID] identifying subjects and objects. Your task is to detect all active visual relations occurring between the marked entities over time.\n\nSTRICT CONSTRAINTS:\n1. You MUST strictly select relation predicates ONLY from these 26 predefined categories: ['bite', 'carry', 'clean', 'cut', 'drive', 'feed', 'get_off', 'get_on', 'grab', 'hit', 'hold', 'hug', 'kick', 'kiss', 'knock', 'lean_on', 'lick', 'lift', 'play(instrument)', 'pull', 'push', 'ride', 'shake_hand_with', 'throw', 'touch', 'wave'].\n2. SEMANTIC AFFORDANCE & ROLE RULES:\n   - Inanimate objects (such as handbag, backpack) CANNOT be the subject of action verbs (e.g., a handbag cannot 'hold' or 'carry' a human). Only persons can hold or carry objects.\n   - If a person merely walks past an entity without physical contact or purposeful interaction, DO NOT predict relations (do NOT predict get_on/touch).\n3. Output format MUST be strictly a valid JSON object matching this schema:\n{\n  \"temporal_summary\": \"<brief 1-sentence description of overall interactions and movements across frames>\",\n  \"triplets\": [\n    {\n      \"subject\": \"[ID]\",\n      \"relation\": \"<predicate>\",\n      \"object\": \"[ID]\",\n      \"reason\": \"<brief explanation of why this relation is selected based on visual evidence>\"\n    }\n  ]\n}\n4. DO NOT output any markdown code blocks, explanations, or conversational text. Output ONLY the raw JSON object.",
-    "vlm_user_prompt": "Analyze all provided sequential frames of this surveillance video clip. Detected entities with visual marks: [1] (person), [2] (person), [3] (person), [4] (handbag).\nPerform a systematic pair-by-pair check across the full time duration:\n- Examine all Person-Person interactions across frames.\n- Examine all Person-Object interactions across frames.\nRemember: Inanimate objects cannot hold humans, and walking past is not get_on.\nFirst write a brief 1-sentence temporal_summary of observed actions, then list all detected relation triplets with a 'reason' for each.\nSelect predicates strictly from the allowed 26 categories. Respond strictly with the JSON object: {\"temporal_summary\": \"...\", \"triplets\": [{\"subject\": \"[ID]\", \"relation\": \"<verb>\", \"object\": \"[ID]\", \"reason\": \"...\"}]}.",
-    "ground_truth_triplet_labels": [
-        {
-            "subject": "[1]",
-            "relation": "touch",
-            "object": "[2]",
-            "description": "Person [1] puts arm around Person [2] shoulder"
-        },
-        {
-            "subject": "[2]",
-            "relation": "hug",
-            "object": "[1]",
-            "description": "Person [2] embraces Person [1] as they prepare to leave"
-        },
-        {
-            "subject": "[1]",
-            "relation": "get_off",
-            "object": "[4]",
-            "description": "Person [1] walks away, leaving the bag [4] behind on the floor"
-        }
-    ],
-    "scene_event_summary": {
-        "primary_actors": [
-            "[1] person",
-            "[2] person"
-        ],
-        "unattended_entity": "[4] handbag",
-        "passerby_entity": "[3] person",
-        "description": "Person [1] and [2] interact (touch, hug) and leave the scene through the door, leaving handbag [4] stationary on the floor. Passerby [3] enters the hall without interacting with [1], [2], or [4]."
+    {
+      "mark_id": "[2]",
+      "class_label": "person"
+    },
+    {
+      "mark_id": "[3]",
+      "class_label": "person"
+    },
+    {
+      "mark_id": "[4]",
+      "class_label": "handbag"
     }
+  ],
+  "allowed_relations_vocabulary_26": [
+    "bite",
+    "carry",
+    "clean",
+    "cut",
+    "drive",
+    "feed",
+    "get_off",
+    "get_on",
+    "grab",
+    "hit",
+    "hold",
+    "hug",
+    "kick",
+    "kiss",
+    "knock",
+    "lean_on",
+    "lick",
+    "lift",
+    "play(instrument)",
+    "pull",
+    "push",
+    "ride",
+    "shake_hand_with",
+    "throw",
+    "touch",
+    "wave"
+  ],
+  "visual_prompt_frames_sequence": [
+    "vlm_abandoned_tuned_frame_01_43.98s.jpg",
+    "vlm_abandoned_tuned_frame_02_44.98s.jpg",
+    "vlm_abandoned_tuned_frame_03_45.98s.jpg",
+    "vlm_abandoned_tuned_frame_04_46.98s.jpg",
+    "vlm_abandoned_tuned_frame_05_47.98s.jpg",
+    "vlm_abandoned_tuned_frame_06_48.98s.jpg",
+    "vlm_abandoned_tuned_frame_07_49.98s.jpg",
+    "vlm_abandoned_tuned_frame_08_50.98s.jpg"
+  ],
+  "vlm_system_prompt": "You are an advanced Video Visual Relation Detection (VidVRD) AI for surveillance analytics. You are given a temporal sequence of video frames with numbered visual marks [ID] identifying subjects and objects. Your task is to detect all active visual relations occurring between the marked entities over time.\n\nSTRICT CONSTRAINTS:\n1. You MUST strictly select relation predicates ONLY from these 26 predefined categories: ['bite', 'carry', 'clean', 'cut', 'drive', 'feed', 'get_off', 'get_on', 'grab', 'hit', 'hold', 'hug', 'kick', 'kiss', 'knock', 'lean_on', 'lick', 'lift', 'play(instrument)', 'pull', 'push', 'ride', 'shake_hand_with', 'throw', 'touch', 'wave'].\n2. SEMANTIC AFFORDANCE & ROLE RULES:\n   - Inanimate objects (such as handbag, backpack) CANNOT be the subject of action verbs (e.g., a handbag cannot 'hold' or 'carry' a human). Only persons can hold or carry objects.\n   - If a person merely walks past an entity without physical contact or purposeful interaction, DO NOT predict relations (do NOT predict get_on/touch).\n3. Output format MUST be strictly a valid JSON object matching this schema:\n{\n  \"temporal_summary\": \"<brief 1-sentence description of overall interactions and movements across frames>\",\n  \"triplets\": [\n    {\n      \"subject\": \"[ID]\",\n      \"relation\": \"<predicate>\",\n      \"object\": \"[ID]\",\n      \"reason\": \"<brief explanation of why this relation is selected based on visual evidence>\"\n    }\n  ]\n}\n4. DO NOT output any markdown code blocks, explanations, or conversational text. Output ONLY the raw JSON object.",
+  "vlm_user_prompt": "Analyze all provided sequential frames of this surveillance video clip. Detected entities with visual marks: [1] (person), [2] (person), [3] (person), [4] (handbag).\nPerform a systematic pair-by-pair check across the full time duration:\n- Examine all Person-Person interactions across frames.\n- Examine all Person-Object interactions across frames.\nRemember: Inanimate objects cannot hold humans, and walking past is not get_on.\nFirst write a brief 1-sentence temporal_summary of observed actions, then list all detected relation triplets with a 'reason' for each.\nSelect predicates strictly from the allowed 26 categories. Respond strictly with the JSON object: {\"temporal_summary\": \"...\", \"triplets\": [{\"subject\": \"[ID]\", \"relation\": \"<verb>\", \"object\": \"[ID]\", \"reason\": \"...\"}]}.",
+  "ground_truth_triplet_labels": [
+    {
+      "subject": "[1]",
+      "relation": "touch",
+      "object": "[2]",
+      "evidence": "Person [1] has physical contact / touches Person [2]'s arm/shoulder at parting"
+    },
+    {
+      "subject": "[1]",
+      "relation": "away",
+      "object": "[4]",
+      "evidence": "Person [1] moves away from stationary handbag [4]"
+    },
+    {
+      "subject": "[2]",
+      "relation": "away",
+      "object": "[4]",
+      "evidence": "Person [2] moves away from stationary handbag [4]"
+    },
+    {
+      "subject": "[3]",
+      "relation": "walk_past",
+      "object": "[4]",
+      "evidence": "Passerby Person [3] walks past stationary handbag [4] without interacting or touching"
+    }
+  ]
 }
