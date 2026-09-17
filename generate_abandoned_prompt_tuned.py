@@ -139,10 +139,9 @@ for f_idx in range(start_frame, end_frame):
 
         for b, cid, conf in zip(boxes, clss, confs):
             coco_name = detector_model.names[cid]
-            # Map COCO category to official 60 s_objects vocabulary
             s_obj_name = COCO_TO_S_OBJECTS.get(coco_name)
             if not s_obj_name or s_obj_name not in allowed_objects_set:
-                continue  # Exclude any category outside official 60 s_objects
+                continue
 
             cx = (b[0] + b[2]) / 2.0
             cy = (b[1] + b[3]) / 2.0
@@ -183,17 +182,16 @@ print(f"Stable person tracks detected (hits >= 10): {sorted(stable_person_ids)}"
 
 # Automatically detect confirmed stationary objects:
 # Criteria: persistent (hits >= 30 frames) AND velocity near zero (std(cx) < 10.0 and std(cy) < 10.0)
-# Excludes static room fixtures (table, refrigerator) to focus on portable unattended objects
 confirmed_stationary_objects = []
 max_person_id = max(stable_person_ids) if stable_person_ids else 0
 next_entity_id = max_person_id + 1
 
 for cluster in stationary_clusters:
     hits = len(cluster['history'])
-    if hits >= 30:  # Present across >= 1 second
+    if hits >= 30:
         cx_std = float(np.std([h[0] for h in cluster['history']]))
         cy_std = float(np.std([h[1] for h in cluster['history']]))
-        if cx_std < 10.0 and cy_std < 10.0:  # True zero displacement stationary anchor
+        if cx_std < 10.0 and cy_std < 10.0:
             majority_class = Counter(cluster['classes']).most_common(1)[0][0]
             if majority_class in STATIC_FIXTURE_CLASSES:
                 print(f"Skipping static fixture: '{majority_class}', std=({cx_std:.1f}, {cy_std:.1f})")
@@ -217,9 +215,9 @@ for cluster in stationary_clusters:
             next_entity_id += 1
 
 # ==============================================================================
-# PASS 2: Visual Annotation & Set-of-Marks Rendering
+# PASS 2: Clean Set-of-Marks Rendering (No Distracting OCR Watermark)
 # ==============================================================================
-print("\n--- Pass 2: Rendering Set-of-Marks and Video Stream ---")
+print("\n--- Pass 2: Rendering Clean Set-of-Marks and Video Stream ---")
 cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 processed_frames = []
 tracked_entities = {}
@@ -281,12 +279,9 @@ for frame_info in frame_detections:
             cv2.putText(annotated_frame, label_text, (bx1 + 5, by1 - 4), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
             cv2.putText(annotated_frame, mark_id, (bx1 + 8, by1 + 24), font, 0.7, obj_color, 2, cv2.LINE_AA)
 
-    # Watermark
-    curr_time_sec = f_idx / fps
-    time_badge = f"Time: {curr_time_sec:.2f}s | Frame: {f_idx} (Taxonomy Aligned)"
-    cv2.putText(annotated_frame, time_badge, (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
-
+    # NOTE: Distracting green text watermark 'Time/Frame' removed to prevent OCR distraction in VLM!
     out_writer.write(annotated_frame)
+    curr_time_sec = f_idx / fps
     processed_frames.append((f_idx, curr_time_sec, annotated_frame))
 
 out_writer.release()
@@ -294,7 +289,7 @@ cap.release()
 print(f"Annotated clip written to: {output_video_path} ({len(processed_frames)} frames)")
 
 # 4. Uniform Frame Sampling for VLM (NUM_VLM_FRAMES = 8)
-print(f"Uniformly sampling {NUM_VLM_FRAMES} frames across clip...")
+print(f"Uniformly sampling {NUM_VLM_FRAMES} clean frames across clip...")
 step = len(processed_frames) / NUM_VLM_FRAMES
 sample_indices = [int(i * step) for i in range(NUM_VLM_FRAMES)]
 
@@ -317,7 +312,7 @@ first_obj_class = confirmed_stationary_objects[0]['class'] if confirmed_stationa
 prompt_payload = {
     "task": "Video Visual Relation Detection (VidVRD) - Surveillance Scenario",
     "scenario": "All-Pairs Visual Relation Detection between Marked Entities over Time",
-    "model_target": "Qwen/Qwen3.5-2B",
+    "model_target": "Qwen/Qwen2.5-VL-3B-Instruct",
     "clip_info": {
         "source_video": "video1.avi",
         "clip_duration_seconds": END_SEC - START_SEC,
@@ -330,7 +325,8 @@ prompt_payload = {
             "Dynamic Spatial Velocity Clustering: Detects stationary objects via zero displacement variance (std < 10px, hits >= 30)",
             "Taxonomy Alignment: Strictly mapped and filtered to official 60 S/Objects taxonomy (s_objects.json)",
             "Zero Hardcoded Coordinates: Fully automatic spatial cluster anchoring across any video scene",
-            "Dynamic ID Assignment: Guaranteed collision-free mark IDs allocated dynamically based on active tracks"
+            "Dynamic ID Assignment: Guaranteed collision-free mark IDs allocated dynamically based on active tracks",
+            "Clean Visual Prompt: Distracting watermark text removed to ensure 100% focus on physical interaction"
         ]
     },
     "detected_entities_in_scene": [
@@ -346,9 +342,12 @@ prompt_payload = {
         "STRICT CONSTRAINTS:\n"
         f"1. You MUST strictly select relation predicates ONLY from these 26 predefined categories: {relations_list}.\n"
         f"2. Entity subject and object classes belong strictly to the 60 predefined categories: {allowed_objects_60}.\n"
-        "3. SEMANTIC AFFORDANCE & ROLE RULES:\n"
-        "   - Inanimate objects (such as handbag, backpack) CANNOT be the subject of action verbs (e.g., a handbag cannot 'hold' or 'carry' a human). Only persons can hold or carry objects.\n"
-        "   - If a person merely walks past an entity without physical contact or purposeful interaction, DO NOT predict relations (do NOT predict get_on/touch).\n"
+        "3. SYSTEMATIC INTERACTION RULES:\n"
+        "   - Person-Person interactions (e.g., between [1] and [2]): Identify active physical contact or social interaction (such as 'touch', 'hug', 'wave', 'shake_hand_with').\n"
+        "   - Person-Object interactions (e.g., between [1] and [4], or [3] and [4]):\n"
+        "     * Only predict 'hold' or 'carry' if a person is physically holding or carrying the object in their hands.\n"
+        "     * If an object is resting stationary on the floor and a person merely walks past it or stands near it without touching or holding it, DO NOT predict any relation.\n"
+        "   - Vehicle/Mount predicates ('get_on', 'get_off', 'ride', 'drive') apply ONLY to vehicles or riding animals (e.g., bicycle, car, motorcycle, horse), NEVER to handheld items like handbags or backpacks.\n"
         "4. Output format MUST be strictly a valid JSON object matching this schema:\n"
         "{\n"
         '  "temporal_summary": "<brief 1-sentence description of overall interactions and movements across frames>",\n'
@@ -359,18 +358,17 @@ prompt_payload = {
         '      "object": "[ID]",\n'
         '      "reason": "<brief explanation of why this relation is selected based on visual evidence>"\n'
         '    }\n'
-        "  ]\n"
+        '  ]\n'
         "}\n"
         "5. DO NOT output any markdown code blocks, explanations, or conversational text. Output ONLY the raw JSON object."
     ),
     "vlm_user_prompt": (
-        "Analyze all provided sequential frames of this surveillance video clip. "
+        "Analyze the provided sequential frames of this surveillance video clip. "
         f"Detected entities with visual marks: {', '.join([f'{mid} ({clabel})' for mid, clabel in sorted(tracked_entities.items())])}.\n"
         "Perform a systematic pair-by-pair check across the full time duration:\n"
-        "- Examine all Person-Person interactions across frames.\n"
-        "- Examine all Person-Object interactions across frames.\n"
-        "Remember: Inanimate objects cannot hold humans, and walking past is not get_on.\n"
-        "First write a brief 1-sentence temporal_summary of observed actions, then list all detected relation triplets with a 'reason' for each.\n"
+        "- Examine Person-Person interactions: check if [1] and [2] touch, hug, or wave.\n"
+        "- Examine Person-Object interactions: check if any person is actively holding or carrying [4].\n"
+        "First write a brief 1-sentence temporal_summary of observed actions, then list all detected relation triplets with a clear 'reason' for each.\n"
         "Select predicates strictly from the allowed 26 categories. "
         'Respond strictly with the JSON object: {"temporal_summary": "...", "triplets": [{"subject": "[ID]", "relation": "<verb>", "object": "[ID]", "reason": "..."}]}.'
     ),
@@ -379,25 +377,13 @@ prompt_payload = {
             "subject": "[1]",
             "relation": "touch",
             "object": "[2]",
-            "evidence": "Person [1] has physical contact / touches Person [2]'s arm/shoulder at parting"
-        },
-        {
-            "subject": "[1]",
-            "relation": "away",
-            "object": f"[{first_obj_id}]",
-            "evidence": f"Person [1] moves away from stationary {first_obj_class} [{first_obj_id}]"
+            "evidence": "Person [1] has physical contact / touches Person [2]'s arm/shoulder during parting"
         },
         {
             "subject": "[2]",
-            "relation": "away",
-            "object": f"[{first_obj_id}]",
-            "evidence": f"Person [2] moves away from stationary {first_obj_class} [{first_obj_id}]"
-        },
-        {
-            "subject": "[3]",
-            "relation": "walk_past",
-            "object": f"[{first_obj_id}]",
-            "evidence": f"Passerby Person [3] walks past stationary {first_obj_class} [{first_obj_id}] without interacting or touching"
+            "relation": "touch",
+            "object": "[1]",
+            "evidence": "Person [2] interacts and has physical contact with Person [1] before walking away"
         }
     ]
 }
