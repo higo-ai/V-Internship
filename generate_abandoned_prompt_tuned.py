@@ -16,6 +16,11 @@ payload_path = os.path.join(base_dir, "vlm_prompt_payload_abandoned_tuned.json")
 os.makedirs(vlm_frames_dir, exist_ok=True)
 os.makedirs(artifact_dir, exist_ok=True)
 
+# Clean old frames in directory before sampling
+for f in os.listdir(vlm_frames_dir):
+    if f.endswith(".jpg"):
+        os.remove(os.path.join(vlm_frames_dir, f))
+
 # Load official project taxonomies (60 S/Objects and 26 Relations)
 with open(os.path.join(base_dir, "s_objects.json"), encoding="utf-8") as f:
     allowed_objects_60 = json.load(f)
@@ -41,7 +46,7 @@ COCO_TO_S_OBJECTS = {
 # 2. Golden segment for Abandoned Object: seconds 44.0 to 52.0 (8.0 seconds, 240 frames)
 START_SEC = 44.0
 END_SEC = 52.0
-NUM_VLM_FRAMES = 8
+NUM_VLM_FRAMES = 10  # Optimal sampling density: 0.8s / frame
 
 cap = cv2.VideoCapture(video_path)
 fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -56,6 +61,7 @@ clip_frame_count = end_frame - start_frame
 print(f"Original Video: {total_frames} frames, {fps:.2f} FPS")
 print(f"Clipping segment: {START_SEC}s - {END_SEC}s (frames {start_frame} to {end_frame}, total {clip_frame_count} frames)")
 print(f"Project Taxonomies loaded: {len(allowed_objects_60)} S/Objects, {len(relations_list)} Relations")
+print(f"Frame Sampling Density: {NUM_VLM_FRAMES} frames across {END_SEC - START_SEC:.1f}s clip")
 
 # 3. Initialize YOLO Models
 print("Loading YOLO models (local weights yolo11n.pt)...")
@@ -295,7 +301,7 @@ out_writer.release()
 cap.release()
 print(f"Annotated clip written to: {output_video_path} ({len(processed_frames)} frames)")
 
-# 4. Uniform Frame Sampling for VLM (NUM_VLM_FRAMES = 8)
+# 4. Uniform Frame Sampling for VLM (NUM_VLM_FRAMES = 10)
 print(f"Uniformly sampling {NUM_VLM_FRAMES} clean frames across clip...")
 step = len(processed_frames) / NUM_VLM_FRAMES
 sample_indices = [int(i * step) for i in range(NUM_VLM_FRAMES)]
@@ -312,7 +318,7 @@ for order, s_idx in enumerate(sample_indices, 1):
     sampled_frame_files.append(fn)
     print(f"  [Frame {order}/{NUM_VLM_FRAMES}] Saved: {fn} (idx {s_idx}, sec {f_sec:.2f}s)")
 
-# 5. Generate Tuned VLM Prompt Payload (Generalized VidVRD Format with Forced Spatial Attention)
+# 5. Generate Tuned VLM Prompt Payload (Generalized VidVRD Format with 10 Frames & Vocabulary Guardrail)
 first_obj_id = confirmed_stationary_objects[0]['id'] if confirmed_stationary_objects else 4
 first_obj_class = confirmed_stationary_objects[0]['class'] if confirmed_stationary_objects else "handbag"
 
@@ -336,8 +342,10 @@ prompt_payload = {
             "Taxonomy Alignment: Strictly mapped and filtered to official 60 S/Objects taxonomy (s_objects.json)",
             "Zero Hardcoded Coordinates: Fully automatic spatial cluster anchoring across any video scene",
             "Dynamic ID Assignment: Guaranteed collision-free mark IDs allocated dynamically based on active tracks",
+            "10-Frame Temporal Smoothness: 0.8s resolution eliminating visual occlusion ambiguity",
             "100% Agnostic System Prompt: No specific IDs or answer-leaking suggestions",
             "Forced Spatial Attention CoT: Explicit spatial grounding of stationary objects in temporal summary",
+            "Closed-Taxonomy Mapping Guardrail: Strictly maps visual actions to 26 benchmark predicates",
             "Interleaved Temporal Anchoring: Clean visual frames paired with language timestamps"
         ]
     },
@@ -360,6 +368,7 @@ prompt_payload = {
         "   - SPECIAL RULE FOR 'get_off': In this taxonomy, use 'get_off' ONLY to describe a person actively moving away from, releasing, or leaving an inanimate object behind (e.g., leaving an object stationary on the floor).\n"
         "   - Vehicle Rules: Predicates like 'get_on', 'ride', 'drive' MUST ONLY be used if the object is explicitly a vehicle (bicycle, car, motorcycle, bus, train) or an animal (horse).\n"
         "   - Negative Pairs: If an object is resting stationary on the floor and a person merely walks past or approaches without physical contact, DO NOT predict any relation.\n"
+        "   - Ground Truth Fidelity: Strictly report visual facts. Do not hallucinate actions that are not visible. If an object remains visible on the floor in the final frames, it is NOT picked up.\n"
         "4. Output format MUST be strictly a valid JSON object matching this schema:\n"
         "{\n"
         '  "temporal_summary": "<brief description of the progression of actions from early to late frames, explicitly noting any changes in the physical location or state of inanimate objects>",\n'
@@ -380,9 +389,14 @@ prompt_payload = {
         "Perform a systematic pair-by-pair check across the full time duration:\n"
         "- Examine ALL Person-Person combinations.\n"
         "- Examine ALL Person-Object combinations.\n\n"
-        "CRITICAL INSTRUCTION: First, write a temporal_summary describing the progression of actions across time from early frames to late frames. In this summary, you MUST explicitly describe how the physical state and location of any inanimate objects change over time (e.g., whether an object is initially held and later left resting on the floor, and where the persons move).\n"
-        "Then, list all detected relation triplets with a clear 'reason' for each.\n"
-        "Select predicates strictly from the allowed 26 categories. "
+        "CRITICAL INSTRUCTION: First, write a temporal_summary describing the progression of actions across time from early frames to late frames. "
+        "In this summary, explicitly state the physical location of any inanimate objects across the frames (e.g., whether an object remains stationary on the floor and whether persons move away from it). "
+        "Do NOT invent actions not visible in the frames (if an object remains on the floor in the final frames, it has NOT been picked up).\n\n"
+        "CLOSED-VOCABULARY MAPPING CONSTRAINT: In the 'relation' field of each triplet, you MUST select predicates strictly from the allowed 26 categories:\n"
+        "- When a person moves away leaving an entity resting on the floor: you MUST select 'get_off' (never output 'leave').\n"
+        "- When a person merely walks past an object or person without physical contact: DO NOT create a triplet (never output 'walk').\n"
+        "- Never output words outside the 26 allowed categories (such as 'walk', 'leave', or 'pick_up').\n"
+        f"Allowed 26 predicates: {relations_list}.\n\n"
         'Respond strictly with the JSON object: {"temporal_summary": "...", "triplets": [{"subject": "[ID]", "relation": "<verb>", "object": "[ID]", "reason": "..."}]}.'
     ),
     "ground_truth_triplet_labels": [
