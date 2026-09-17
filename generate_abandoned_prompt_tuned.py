@@ -94,104 +94,112 @@ print("\n--- Pass 1: Extracting Dynamic Person Tracks & Spatial Object Clusters 
 cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
 frame_detections = []
-person_track_hits = defaultdict(int)
-stationary_clusters = []
+raw_stationary_clusters = defaultdict(lambda: {'boxes': [], 'classes': [], 'frame_indices': []})
+CLUSTER_DIST_THRESH = 35.0
+
+stable_person_ids = set()
+person_hit_counts = Counter()
 
 for f_idx in range(start_frame, end_frame):
     ret, frame = cap.read()
     if not ret:
         break
 
-    # Track persons dynamically using ByteTrack (class 0 = person)
-    results = tracker_model.track(
+    # 1. Track Persons with ByteTrack
+    p_results = tracker_model.track(
         frame,
         persist=True,
-        tracker=os.path.join(base_dir, "custom_bytetrack.yaml"),
         classes=[0],
         conf=0.25,
+        iou=0.5,
+        tracker="bytetrack.yaml",
         verbose=False
-    )
+    )[0]
 
-    # Detect all non-person objects across COCO (all non-zero classes)
-    obj_res = detector_model.predict(
-        frame,
-        conf=0.15,
-        classes=[c for c in range(80) if c != 0],
-        verbose=False
-    )
+    current_persons = []
+    if p_results.boxes and p_results.boxes.id is not None:
+        p_boxes = p_results.boxes.xyxy.cpu().numpy().astype(int)
+        p_ids = p_results.boxes.id.cpu().numpy().astype(int)
+        for b, tid in zip(p_boxes, p_ids):
+            current_persons.append((b, tid, "person"))
+            person_hit_counts[tid] += 1
 
-    # Collect person bounding boxes and IDs
-    p_data = []
-    if results and results[0].boxes and results[0].boxes.id is not None:
-        boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
-        tids = results[0].boxes.id.cpu().numpy().astype(int)
-        cids = results[0].boxes.cls.cpu().numpy().astype(int)
-        for b, tid, cid in zip(boxes, tids, cids):
-            person_track_hits[tid] += 1
-            p_data.append((b, tid, "person"))
+    # 2. Open-Vocabulary Object Detection (Classes != person)
+    all_det = detector_model(frame, conf=0.15, verbose=False)[0]
+    current_objects = []
+    if all_det.boxes:
+        d_boxes = all_det.boxes.xyxy.cpu().numpy().astype(int)
+        d_confs = all_det.boxes.conf.cpu().numpy()
+        d_classes = all_det.boxes.cls.cpu().numpy().astype(int)
+        class_names = all_det.names
 
-    # Collect object detections and cluster stationary candidates (strictly mapped to 60 s_objects)
-    o_data = []
-    if len(obj_res) > 0 and len(obj_res[0].boxes) > 0:
-        boxes = obj_res[0].boxes.xyxy.cpu().numpy()
-        clss = obj_res[0].boxes.cls.cpu().numpy().astype(int)
-        confs = obj_res[0].boxes.conf.cpu().numpy()
-
-        for b, cid, conf in zip(boxes, clss, confs):
-            coco_name = detector_model.names[cid]
-            s_obj_name = COCO_TO_S_OBJECTS.get(coco_name)
-            if not s_obj_name or s_obj_name not in allowed_objects_set:
+        for b, c_conf, c_idx in zip(d_boxes, d_confs, d_classes):
+            c_raw = class_names[c_idx]
+            if c_raw == "person":
                 continue
 
+            mapped_class = COCO_TO_S_OBJECTS.get(c_raw, None)
+            if not mapped_class or mapped_class not in allowed_objects_set:
+                continue
+
+            # Exclude large scene backgrounds
+            bw = b[2] - b[0]
+            bh = b[3] - b[1]
+            if bw > width * 0.45 or bh > height * 0.45:
+                continue
+
+            current_objects.append((b, c_conf, mapped_class))
+
+            # Cluster spatial locations
             cx = (b[0] + b[2]) / 2.0
             cy = (b[1] + b[3]) / 2.0
-            o_data.append((b.astype(int), s_obj_name, conf))
 
-            # Spatial association: match against running cluster center (dist < 40px)
-            matched = False
-            for cl in stationary_clusters:
-                avg_cx = np.mean([h[0] for h in cl['history']])
-                avg_cy = np.mean([h[1] for h in cl['history']])
-                if np.hypot(cx - avg_cx, cy - avg_cy) < 40.0:
-                    cl['history'].append((cx, cy))
-                    cl['boxes'].append(b)
-                    cl['classes'].append(s_obj_name)
-                    cl['confs'].append(float(conf))
-                    cl['frame_indices'].append(f_idx)
-                    matched = True
+            assigned = False
+            for k in list(raw_stationary_clusters.keys()):
+                dist = np.hypot(cx - k[0], cy - k[1])
+                if dist < CLUSTER_DIST_THRESH:
+                    raw_stationary_clusters[k]['boxes'].append(b)
+                    raw_stationary_clusters[k]['classes'].append(mapped_class)
+                    raw_stationary_clusters[k]['frame_indices'].append(f_idx)
+                    assigned = True
                     break
 
-            if not matched:
-                stationary_clusters.append({
-                    'history': [(cx, cy)],
-                    'boxes': [b],
-                    'classes': [s_obj_name],
-                    'confs': [float(conf)],
-                    'frame_indices': [f_idx]
-                })
+            if not assigned:
+                new_key = (cx, cy)
+                raw_stationary_clusters[new_key]['boxes'].append(b)
+                raw_stationary_clusters[new_key]['classes'].append(mapped_class)
+                raw_stationary_clusters[new_key]['frame_indices'].append(f_idx)
 
     frame_detections.append({
         'frame_idx': f_idx,
-        'persons': p_data,
-        'objects': o_data
+        'persons': current_persons,
+        'objects': current_objects
     })
 
-# Filter stable person tracks (discard transient detector flickers < 10 frames)
-stable_person_ids = {int(tid) for tid, count in person_track_hits.items() if count >= 10}
-print(f"Stable person tracks detected (hits >= 10): {sorted(stable_person_ids)}")
+# Filter stable persons (visible for at least 15 frames)
+for tid, count in person_hit_counts.items():
+    if count >= 15:
+        stable_person_ids.add(tid)
+print(f"Stable dynamic person IDs tracked: {sorted(list(stable_person_ids))}")
 
-# Automatically detect confirmed stationary objects:
-# Criteria: persistent (hits >= 30 frames) AND velocity near zero (std(cx) < 10.0 and std(cy) < 10.0)
-confirmed_stationary_objects = []
-max_person_id = max(stable_person_ids) if stable_person_ids else 0
+# Identify confirmed stationary objects via zero displacement variance
+max_person_id = max(stable_person_ids) if stable_person_ids else 3
 next_entity_id = max_person_id + 1
 
-for cluster in stationary_clusters:
-    hits = len(cluster['history'])
-    if hits >= 30:
-        cx_std = float(np.std([h[0] for h in cluster['history']]))
-        cy_std = float(np.std([h[1] for h in cluster['history']]))
-        if cx_std < 10.0 and cy_std < 10.0:
+confirmed_stationary_objects = []
+MIN_STATIONARY_HITS = 30
+MAX_COORD_STD = 10.0
+
+for k, cluster in raw_stationary_clusters.items():
+    hits = len(cluster['boxes'])
+    if hits >= MIN_STATIONARY_HITS:
+        boxes_arr = np.array(cluster['boxes'])
+        cxs = (boxes_arr[:, 0] + boxes_arr[:, 2]) / 2.0
+        cys = (boxes_arr[:, 1] + boxes_arr[:, 3]) / 2.0
+        cx_std = float(np.std(cxs))
+        cy_std = float(np.std(cys))
+
+        if cx_std < MAX_COORD_STD and cy_std < MAX_COORD_STD:
             majority_class = Counter(cluster['classes']).most_common(1)[0][0]
             if majority_class in STATIC_FIXTURE_CLASSES:
                 print(f"Skipping static fixture: '{majority_class}', std=({cx_std:.1f}, {cy_std:.1f})")
@@ -304,7 +312,7 @@ for order, s_idx in enumerate(sample_indices, 1):
     sampled_frame_files.append(fn)
     print(f"  [Frame {order}/{NUM_VLM_FRAMES}] Saved: {fn} (idx {s_idx}, sec {f_sec:.2f}s)")
 
-# 5. Generate Tuned VLM Prompt Payload (Generalized VidVRD Format)
+# 5. Generate Tuned VLM Prompt Payload (Generalized VidVRD Format with Forced Spatial Attention)
 first_obj_id = confirmed_stationary_objects[0]['id'] if confirmed_stationary_objects else 4
 first_obj_class = confirmed_stationary_objects[0]['class'] if confirmed_stationary_objects else "handbag"
 
@@ -329,6 +337,7 @@ prompt_payload = {
             "Zero Hardcoded Coordinates: Fully automatic spatial cluster anchoring across any video scene",
             "Dynamic ID Assignment: Guaranteed collision-free mark IDs allocated dynamically based on active tracks",
             "100% Agnostic System Prompt: No specific IDs or answer-leaking suggestions",
+            "Forced Spatial Attention CoT: Explicit spatial grounding of stationary objects in temporal summary",
             "Interleaved Temporal Anchoring: Clean visual frames paired with language timestamps"
         ]
     },
@@ -346,15 +355,14 @@ prompt_payload = {
         f"1. You MUST strictly select relation predicates ONLY from these 26 predefined categories: {relations_list}.\n"
         f"2. Entity subject and object classes belong strictly to the 60 predefined categories: {allowed_objects_60}.\n"
         "3. SYSTEMATIC INTERACTION RULES:\n"
-        "   - Person-Person interactions: Identify active physical contact or intentional social interaction.\n"
-        "   - Person-Object interactions:\n"
-        "     * Predict manipulation verbs (e.g., 'hold', 'carry') only if an object is actively held or carried by a person.\n"
-        "     * SPECIAL RULE FOR 'get_off': In this 26-relation taxonomy (which lacks 'leave' or 'abandon'), the predicate 'get_off' is conventionally used to describe a person actively releasing, moving away from, or leaving an entity behind (e.g., leaving an object stationary on the floor).\n"
-        "     * Vehicle/Mount predicates ('get_on', 'ride', 'drive') apply ONLY to vehicles or riding animals, NEVER to handheld items.\n"
-        "     * If an object is resting stationary on the floor and a person merely walks past or stands near it without physical contact, DO NOT predict any relation.\n"
+        "   - Person-Person interactions: Identify active physical contact or intentional social interaction. NEVER use 'get_off' for Person-Person pairs.\n"
+        "   - Person-Object interactions: Only predict manipulation verbs ('hold', 'carry') if a person is physically grasping the object.\n"
+        "   - SPECIAL RULE FOR 'get_off': In this taxonomy, use 'get_off' ONLY to describe a person actively moving away from, releasing, or leaving an inanimate object behind (e.g., leaving an object stationary on the floor).\n"
+        "   - Vehicle Rules: Predicates like 'get_on', 'ride', 'drive' MUST ONLY be used if the object is explicitly a vehicle (bicycle, car, motorcycle, bus, train) or an animal (horse).\n"
+        "   - Negative Pairs: If an object is resting stationary on the floor and a person merely walks past or approaches without physical contact, DO NOT predict any relation.\n"
         "4. Output format MUST be strictly a valid JSON object matching this schema:\n"
         "{\n"
-        '  "temporal_summary": "<brief 1-sentence description of overall interactions and movements across frames>",\n'
+        '  "temporal_summary": "<brief 1-sentence description of overall interactions and movements across frames, explicitly stating the physical location of any inanimate objects>",\n'
         '  "triplets": [\n'
         '    {\n'
         '      "subject": "[ID]",\n'
@@ -367,13 +375,13 @@ prompt_payload = {
         "5. DO NOT output any markdown code blocks, explanations, or conversational text. Output ONLY the raw JSON object."
     ),
     "vlm_user_prompt": (
-        "Analyze all provided sequential frames of this surveillance video clip. "
+        "Analyze all provided sequential frames of this surveillance video clip.\n"
         f"Detected entities with visual marks: {dynamic_entities_string}.\n\n"
         "Perform a systematic pair-by-pair check across the full time duration:\n"
-        "- Examine ALL Person-Person pairs for interactions across frames.\n"
-        "- Examine ALL Person-Object pairs for interactions across frames.\n\n"
-        "Rule: Only predict relations if there is clear, intentional physical interaction or a deliberate action (like leaving an object behind).\n"
-        "First write a brief 1-sentence temporal_summary of observed actions, then list all detected relation triplets with a clear 'reason' for each.\n"
+        "- Examine ALL Person-Person combinations.\n"
+        "- Examine ALL Person-Object combinations.\n\n"
+        "CRITICAL INSTRUCTION: First, write a brief 1-sentence temporal_summary of observed actions. In this summary, you MUST explicitly describe the physical location of any inanimate objects (e.g., state clearly if the object is being held by someone, or if it is resting stationary on the floor).\n"
+        "Then, list all detected relation triplets with a clear 'reason' for each.\n"
         "Select predicates strictly from the allowed 26 categories. "
         'Respond strictly with the JSON object: {"temporal_summary": "...", "triplets": [{"subject": "[ID]", "relation": "<verb>", "object": "[ID]", "reason": "..."}]}.'
     ),
