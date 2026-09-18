@@ -46,7 +46,7 @@ COCO_TO_S_OBJECTS = {
 # 2. Golden segment for Abandoned Object: seconds 44.0 to 52.0 (8.0 seconds, 240 frames)
 START_SEC = 44.0
 END_SEC = 52.0
-NUM_VLM_FRAMES = 10  # Optimal sampling density: 0.8s / frame
+NUM_VLM_FRAMES = 8  # Optimal sampling density: 0.8s / frame
 
 cap = cv2.VideoCapture(video_path)
 fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -301,7 +301,7 @@ out_writer.release()
 cap.release()
 print(f"Annotated clip written to: {output_video_path} ({len(processed_frames)} frames)")
 
-# 4. Uniform Frame Sampling for VLM (NUM_VLM_FRAMES = 10)
+# 4. Uniform Frame Sampling for VLM (NUM_VLM_FRAMES = 8)
 print(f"Uniformly sampling {NUM_VLM_FRAMES} clean frames across clip...")
 step = len(processed_frames) / NUM_VLM_FRAMES
 sample_indices = [int(i * step) for i in range(NUM_VLM_FRAMES)]
