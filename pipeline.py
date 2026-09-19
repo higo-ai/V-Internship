@@ -1,17 +1,40 @@
-import os
+﻿import os
 import json
 import cv2
 import numpy as np
 from collections import Counter, defaultdict
 from ultralytics import YOLO
+import argparse
+
+parser = argparse.ArgumentParser(description="VidVRD Automated Pipeline: Video -> YOLO Tracking & Marks -> 8 Frames -> Payload JSON")
+parser.add_argument("--video", type=str, default="data/videos/video1.mp4", help="Path to input surveillance video")
+parser.add_argument("--start_sec", type=float, default=44.0, help="Start time in seconds for golden segment")
+parser.add_argument("--end_sec", type=float, default=52.0, help="End time in seconds for golden segment")
+parser.add_argument("--num_frames", type=int, default=8, help="Number of clean VLM frames to sample")
+cli_args, _ = parser.parse_known_args()
 
 # 1. Paths & Configurations
 base_dir = os.path.dirname(os.path.abspath(__file__))
-video_path = os.path.join(base_dir, "data", "video1.avi")
-output_video_path = os.path.join(base_dir, "data", "annotated_clip_abandoned_tuned.mp4")
-vlm_frames_dir = os.path.join(base_dir, "data", "vlm_input_frames_abandoned_tuned")
-artifact_dir = r"C:\Users\higoi\.gemini\antigravity-ide\brain\5bde3e10-5ab7-412f-9811-185e514054b1\vlm_input_frames_abandoned_tuned"
-payload_path = os.path.join(base_dir, "vlm_prompt_payload_abandoned_tuned.json")
+video_path = os.path.join(base_dir, cli_args.video) if not os.path.isabs(cli_args.video) else cli_args.video
+if not os.path.exists(video_path):
+    # Fallback from .avi to .mp4 if .avi was converted
+    if video_path.lower().endswith(".avi"):
+        alt_path = video_path[:-4] + ".mp4"
+        if os.path.exists(alt_path):
+            video_path = alt_path
+    elif not os.path.exists(video_path):
+        alt_data = os.path.join(base_dir, "data", "videos", os.path.basename(video_path))
+        if os.path.exists(alt_data):
+            video_path = alt_data
+        elif alt_data.lower().endswith(".avi") and os.path.exists(alt_data[:-4] + ".mp4"):
+            video_path = alt_data[:-4] + ".mp4"
+video_basename = os.path.splitext(os.path.basename(video_path))[0]
+output_video_path = os.path.join(base_dir, "data", "video_processed", f"{video_basename}_annotated.mp4")
+vlm_frames_dir = os.path.join(base_dir, "data", "frames", video_basename)
+artifact_dir = r"C:\Users\higoi\.gemini\antigravity-ide\brain\5bde3e10-5ab7-412f-9811-185e514054b1\frames"
+payloads_dir = os.path.join(base_dir, "data", "payloads")
+os.makedirs(payloads_dir, exist_ok=True)
+payload_path = os.path.join(payloads_dir, f"{video_basename}_payload.json")
 
 os.makedirs(vlm_frames_dir, exist_ok=True)
 os.makedirs(artifact_dir, exist_ok=True)
@@ -22,11 +45,13 @@ for f in os.listdir(vlm_frames_dir):
         os.remove(os.path.join(vlm_frames_dir, f))
 
 # Load official project taxonomies (60 S/Objects and 26 Relations)
-with open(os.path.join(base_dir, "s_objects.json"), encoding="utf-8") as f:
+sobj_path = os.path.join(base_dir, "configs", "s_objects.json") if os.path.exists(os.path.join(base_dir, "configs", "s_objects.json")) else os.path.join(base_dir, "s_objects.json")
+with open(sobj_path, encoding="utf-8") as f:
     allowed_objects_60 = json.load(f)
     allowed_objects_set = set(allowed_objects_60)
 
-with open(os.path.join(base_dir, "relations.json"), encoding="utf-8") as f:
+rel_path = os.path.join(base_dir, "configs", "relations.json") if os.path.exists(os.path.join(base_dir, "configs", "relations.json")) else os.path.join(base_dir, "relations.json")
+with open(rel_path, encoding="utf-8") as f:
     relations_list = json.load(f)
 
 # Taxonomy alignment: map COCO-80 classes to official 60 s_objects
@@ -44,9 +69,9 @@ COCO_TO_S_OBJECTS = {
 }
 
 # 2. Golden segment for Abandoned Object: seconds 44.0 to 52.0 (8.0 seconds, 240 frames)
-START_SEC = 44.0
-END_SEC = 52.0
-NUM_VLM_FRAMES = 8  # Optimal sampling density: 0.8s / frame
+START_SEC = cli_args.start_sec
+END_SEC = cli_args.end_sec
+NUM_VLM_FRAMES = cli_args.num_frames
 
 cap = cv2.VideoCapture(video_path)
 fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -67,6 +92,12 @@ print(f"Frame Sampling Density: {NUM_VLM_FRAMES} frames across {END_SEC - START_
 print("Loading YOLO models (local weights yolo11n.pt)...")
 tracker_model = YOLO(os.path.join(base_dir, "yolo11n.pt"))
 detector_model = YOLO(os.path.join(base_dir, "yolo11n.pt"))
+tracker_config = os.path.join(base_dir, "configs", "custom_bytetrack.yaml")
+if not os.path.exists(tracker_config):
+    tracker_config = os.path.join(base_dir, "custom_bytetrack.yaml")
+if not os.path.exists(tracker_config):
+    tracker_config = "bytetrack.yaml"
+print(f"Using Tracker Config: {tracker_config}")
 
 COLOR_PALETTE = [
     (0, 0, 255),     # 0: Red
@@ -118,7 +149,7 @@ for f_idx in range(start_frame, end_frame):
         classes=[0],
         conf=0.25,
         iou=0.5,
-        tracker="bytetrack.yaml",
+        tracker=tracker_config,
         verbose=False
     )[0]
 
@@ -309,7 +340,7 @@ sample_indices = [int(i * step) for i in range(NUM_VLM_FRAMES)]
 sampled_frame_files = []
 for order, s_idx in enumerate(sample_indices, 1):
     f_num, f_sec, f_img = processed_frames[s_idx]
-    fn = f"vlm_abandoned_tuned_frame_{order:02d}_{f_sec:.2f}s.jpg"
+    fn = f"frame_{order:02d}_{f_sec:.2f}s.jpg"
 
     out1 = os.path.join(vlm_frames_dir, fn)
     out2 = os.path.join(artifact_dir, fn)
@@ -330,7 +361,8 @@ prompt_payload = {
     "scenario": "All-Pairs Visual Relation Detection between Marked Entities over Time",
     "model_target": "Qwen/Qwen2.5-VL-3B-Instruct",
     "clip_info": {
-        "source_video": "video1.avi",
+        "source_video": os.path.basename(video_path),
+        "frames_directory": f"data/frames/{video_basename}",
         "clip_duration_seconds": END_SEC - START_SEC,
         "start_timestamp": f"{START_SEC}s",
         "end_timestamp": f"{END_SEC}s",
@@ -422,6 +454,5 @@ prompt_payload = {
 
 with open(payload_path, "w", encoding="utf-8") as f:
     json.dump(prompt_payload, f, indent=2, ensure_ascii=False)
-
-print(f"Successfully wrote Tuned VLM Prompt Payload to: {payload_path}")
+print(f"âœ… VLM Prompt Payload written to: {payload_path}")
 print("Entities detected:", prompt_payload["detected_entities_in_scene"])

@@ -15,7 +15,7 @@ def parse_args():
     parser.add_argument(
         "--payload",
         type=str,
-        default="vlm_prompt_payload.json",
+        default="data/payloads/video1_payload.json",
         help="Path to VLM prompt payload JSON file"
     )
     parser.add_argument(
@@ -32,7 +32,7 @@ def parse_args():
     return parser.parse_args()
 
 def get_mock_triplets(payload_name):
-    if "abandoned" in payload_name.lower():
+    if "abandoned" in payload_name.lower() or "video1" in payload_name.lower():
         return [
             {"subject": "[1]", "relation": "touch", "object": "[2]", "reason": "Person [1] touches Person [2] arm/shoulder during conversation"},
             {"subject": "[2]", "relation": "hold", "object": "[4]", "reason": "Person [2] holds handbag [4] in early frames before setting it down"},
@@ -75,13 +75,21 @@ def main():
     if vocab_str not in system_prompt:
         system_prompt += f"\n\nSTRICT ALLOWED 26 RELATIONS VOCABULARY:\n[{vocab_str}]"
 
-    # Determine frames directory dynamically
-    if "tuned" in args.payload.lower():
-        frames_dir = os.path.join(base_dir, "data", "vlm_input_frames_abandoned_tuned")
-    elif "abandoned" in args.payload.lower():
-        frames_dir = os.path.join(base_dir, "data", "vlm_input_frames_abandoned")
+    # Determine frames directory dynamically (Standardized data/frames/<video_name>)
+    clip_frames_dir = payload.get("clip_info", {}).get("frames_directory")
+    payload_name = os.path.basename(payload_file).lower()
+    video_key = payload_name.split("_")[0] if "_" in payload_name else "video1"
+    sub_frames_dir = os.path.join(base_dir, "data", "frames", video_key)
+    std_frames_dir = os.path.join(base_dir, "data", "frames")
+
+    if clip_frames_dir and os.path.exists(os.path.join(base_dir, clip_frames_dir)):
+        frames_dir = os.path.join(base_dir, clip_frames_dir)
+    elif os.path.exists(sub_frames_dir) and len(os.listdir(sub_frames_dir)) > 0:
+        frames_dir = sub_frames_dir
+    elif os.path.exists(std_frames_dir) and any(f.endswith(".jpg") for f in os.listdir(std_frames_dir)):
+        frames_dir = std_frames_dir
     else:
-        frames_dir = os.path.join(base_dir, "data", "vlm_input_frames")
+        frames_dir = sub_frames_dir
 
     print(f"Task: {task_name}")
     print(f"Target Model: {target_model}")

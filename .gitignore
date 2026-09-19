@@ -12,6 +12,9 @@ __pycache__/
 # Heavy video files (exclude raw benchmark videos > 250MB)
 data/*.avi
 data/*.mp4
+data/videos/*.mp4
+data/video_processed/*.mp4
+data/preview/
 data/preview_frames/
 
 # Heavy model binaries
