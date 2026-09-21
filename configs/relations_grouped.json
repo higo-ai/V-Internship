@@ -1,0 +1,40 @@
+{
+  "A. Physical Contact & Manipulation": {
+    "touch": "Physical contact with a surface/entity without grasping.",
+    "hold": "Firmly maintaining an object in hands/grasp without moving.",
+    "carry": "Supporting and transporting an object while in motion.",
+    "grab": "Sudden, rapid taking hold of an object.",
+    "lift": "Raising an object upward from a lower position."
+  },
+  "B. Spatial Separation & Security": {
+    "get_off": "Subject actively moves away from, releases, leaves behind, or abandons a stationary object (e.g., leaving a bag stationary on the floor).",
+    "lean_on": "Resting body weight against an object or person for support."
+  },
+  "C. Physical Force & Motion Transfer": {
+    "push": "Applying force to move an entity away from subject.",
+    "pull": "Applying force to move an entity closer to subject.",
+    "throw": "Propelling an object through the air by hand.",
+    "hit": "Striking an entity with sudden physical force.",
+    "kick": "Forcefully striking an entity with a foot.",
+    "knock": "Striking a surface to produce sound or attract attention."
+  },
+  "D. Vehicle & Animal Mobility (VEHICLE/ANIMAL ONLY)": {
+    "get_on": "Mounting or entering a vehicle or rideable animal.",
+    "drive": "Operating and controlling a motorized vehicle.",
+    "ride": "Sitting on and traveling via a vehicle or animal."
+  },
+  "E. Interpersonal & Social Interaction": {
+    "shake_hand_with": "Mutual hand grasping between persons in greeting.",
+    "hug": "Wrapping arms tightly around another person.",
+    "kiss": "Touching another person with lips.",
+    "wave": "Moving hand back and forth as a visual signal/greeting."
+  },
+  "F. Specialized Actions": {
+    "bite": "Using teeth to grip or cut an object.",
+    "lick": "Passing tongue over an entity.",
+    "feed": "Giving food to another person or animal.",
+    "clean": "Removing dirt, stains, or marks from an object.",
+    "cut": "Dividing or penetrating an object using a sharp tool.",
+    "play(instrument)": "Actively playing a musical instrument."
+  }
+}
