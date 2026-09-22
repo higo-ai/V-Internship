@@ -1,13 +1,13 @@
 {
   "A. Physical Contact & Manipulation": {
-    "touch": "Physical contact with a surface/entity without grasping.",
-    "hold": "Firmly maintaining an object in hands/grasp without moving.",
-    "carry": "Supporting and transporting an object while in motion.",
-    "grab": "Sudden, rapid taking hold of an object.",
-    "lift": "Raising an object upward from a lower position."
+    "touch": "Direct physical contact between entities (e.g., hand touching another person's arm or shoulder) without grasping.",
+    "hold": "Physically grasping and supporting an entity with hands or arms (hands must actively grip the entity; standing near an object resting on the ground is NOT hold).",
+    "carry": "Supporting and transporting an entity while in motion.",
+    "grab": "Sudden, rapid taking hold of an entity.",
+    "lift": "Raising an entity upward from a lower position."
   },
   "B. Spatial Separation & Security": {
-    "get_off": "Subject actively moves away from, releases, leaves behind, or abandons a stationary object (e.g., leaving a bag stationary on the floor).",
+    "get_off": "Subject who was previously in physical possession, holding, or carrying an entity actively releases, departs from, or leaves it stationary (a passerby with no prior possession or physical contact CANNOT get_off an entity).",
     "lean_on": "Resting body weight against an object or person for support."
   },
   "C. Physical Force & Motion Transfer": {
