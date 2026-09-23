@@ -15,6 +15,39 @@
 
 ---
 
+## 2026-09-18
+
+| Task | Khó khăn | Giải pháp | Kết quả | Status |
+|---|---|---|---|---|
+| **Chuẩn hóa 8 frames & chạy benchmark baseline 3x**:<br>Chuẩn hóa mật độ lấy mẫu cố định 8 frames theo yêu cầu của Mentor và chạy benchmark lặp lại 3 lần trên Qwen2.5-VL-3B-Instruct. | Cần đảm bảo việc giảm số frame từ 10 xuống 8 không làm mất thông tin hành vi rời bỏ hành lý và không giảm độ chính xác. | Phân bổ 8 frames đều đặn trên đoạn clip 8s (1 frame/giây); chạy lặp lại 3 lần độc lập trên Colab T4 với greedy decoding để đo tính nhất quán. | Model đạt 100% nhất quán trên cả 3 lần chạy (bắt đúng 100% [1] touch [2] và get_off), thời gian suy luận ổn định ~20s/lần; lưu baseline vào repo. | ✅ Done |
+| **Quy hoạch cấu trúc thư mục project**:<br>Sắp xếp lại cây thư mục repo để chuẩn bị mở rộng quy mô đa video. | Các file cấu hình và dữ liệu đang nằm rải rác ở thư mục gốc, dễ gây xung đột khi test nhiều video. | Gom các file taxonomy vào `configs/` (`s_objects.json`, `relations.json`), quy hoạch thư mục `data/frames/video1/` và `data/payloads/`. | Cấu trúc project gọn gàng, rõ ràng, code đọc đường dẫn linh hoạt và sẵn sàng cho việc mở rộng thêm các video mới. | ✅ Done |
+
+**Tổng kết ngày:** Hôm nay mình tập trung chuẩn hóa số lượng frame đầu vào cố định 8 frames theo định hướng của Mentor để tối ưu thời gian suy luận và bộ nhớ. Sau đó, mình tiến hành chạy benchmark lặp lại 3 lần liên tiếp trên Google Colab T4 với model Qwen2.5-VL-3B-Instruct; kết quả đạt độ ổn định tuyệt đối (100% nhất quán trên cả 3 lần, F1 = 1.0, tốc độ ~20s/lần). Đồng thời, mình đã quy hoạch lại toàn bộ cấu trúc thư mục dự án (tách riêng `configs/`, `data/frames/video1/`, `data/payloads/`) giúp mã nguồn ngăn nắp, chuẩn hóa và sẵn sàng mở rộng thử nghiệm trên nhiều video tiếp theo.
+
+---
+
+## 2026-09-21
+
+| Task | Khó khăn | Giải pháp | Kết quả | Status |
+|---|---|---|---|---|
+| **Xây dựng bộ định nghĩa & gom nhóm 26 quan hệ VidVRD**:<br>Xây dựng file định nghĩa chi tiết và phân nhóm ngữ nghĩa cho 26 quan hệ theo góp ý mở rộng của Mentor. | Ranh giới ngữ nghĩa giữa một số động từ khá hẹp (như touch vs hit, hold vs grab), cần định nghĩa rõ để VLM không bị lúng túng. | Tạo `configs/relations_definitions.json` (định nghĩa cụ thể từng từ) và `configs/relations_grouped.json` (phân loại thành 5 nhóm hành vi lớn). | Hoàn thiện 2 file cấu hình chuẩn hóa ngữ nghĩa cho bộ từ vựng 26 quan hệ của VidVRD, commit lưu trữ mốc 9dfed40. | ✅ Done |
+| **Thực nghiệm diện rộng 4 model VLM trên 3 điều kiện prompt**:<br>Thử nghiệm so sánh 4 model (Qwen2.5-VL-3B, Qwen3-VL-4B, Qwen3.5-2B, Qwen3.5-4B) qua 3 biến thể prompt. | Qwen3.5 (2B và 4B) chạy rất chậm trên Colab và sinh ảo giác; việc hoán đổi liên tục 4 model qua 3 điều kiện prompt dễ nhầm lẫn. | Viết và đồng bộ script Colab nạp động từng model và từng payload; ghi chép nhật ký thực nghiệm độc lập cho từng lượt chạy. | Thu thập đầy đủ kết quả thực nghiệm của 4 model trên 3 điều kiện (prompt thô, prompt định nghĩa chi tiết, prompt gom nhóm). | ✅ Done |
+
+**Tổng kết ngày:** Hôm nay mình tập trung vào việc nghiên cứu mở rộng ngữ nghĩa và thử nghiệm đa mô hình theo yêu cầu của Mentor. Mình đã hoàn thành xây dựng 2 bộ cấu hình định nghĩa chi tiết và gom nhóm ngữ nghĩa cho 26 quan hệ VidVRD. Tiếp đó, mình đã chạy thử nghiệm toàn diện 4 mô hình (Qwen2.5-VL-3B, Qwen3-VL-4B, Qwen3.5-2B, Qwen3.5-4B) trên cả 3 điều kiện prompt (prompt thô, định nghĩa từng từ, định nghĩa gom nhóm). Trong ngày, mình cũng đã trao đổi với Mentor về định hướng hạ tầng mạng và chuẩn bị dữ liệu thực nghiệm để lập bảng so sánh năng lực giữa các mô hình.
+
+---
+
+## 2026-09-22
+
+| Task | Khó khăn | Giải pháp | Kết quả | Status |
+|---|---|---|---|---|
+| **Đánh giá tổng hợp 4 model & chọn lọc mô hình cốt lõi**:<br>Phân tích bảng kết quả so sánh định lượng của 4 model qua 3 điều kiện để quyết định hướng đi tiếp theo. | Qwen3.5-2B/4B bị loại do ảo giác nặng; Qwen3-VL-4B chạy prompt gom nhóm bị nghẽn VRAM (~14.5/15GB) và sinh quan hệ dư thừa/lặp. | Thống nhất loại bỏ Qwen3.5; quyết định quay về giữ nhánh Qwen2.5-VL-3B-Instruct với prompt thô gọn nhẹ, ổn định làm xương sống chính. | Tiết kiệm tài nguyên tính toán, bảo toàn tính ổn định cao và tốc độ suy luận nhanh của pipeline. | ✅ Done |
+| **Mở rộng thử nghiệm Prompt thô sang Video mới (`video7.mp4`)**:<br>Kiểm thử khả năng tổng quát của Qwen2.5-VL-3B trên phân cảnh người mang túi xách vào lớp học (1:50 - 2:10). | Cần xác định đoạn cắt tối ưu để không bị quá dài; khi chạy lần 1 model sinh nhãn ngoài từ vựng (`walk`) và sót quan hệ `get_off`. | Tối ưu đoạn cắt vàng 16 giây (1:54 - 2:10, 8 frames); phân tích nguyên nhân do prompt overfit chữ "floor" (video 7 túi để trên bàn) và túi thiếu nhãn lúc di chuyển. | Cắt và băm thành công 8 frame chuẩn; xác định chính xác nguyên nhân gốc để tối ưu lại prompt tổng quát (`surface`) và luật đóng từ vựng. | ✅ Done |
+
+**Tổng kết ngày:** Hôm nay mình đã tổng hợp và phân tích bảng so sánh thực nghiệm của 4 model: chính thức loại bỏ Qwen3.5 (2B/4B) do không đáp ứng được yêu cầu, đồng thời nhận thấy nhánh Qwen3-VL-4B với prompt gom nhóm chiếm dụng gần cạn VRAM Colab (14.5/15GB) và bị spam quan hệ lặp. Do đó, mình quyết định giữ lại nhánh Qwen2.5-VL-3B-Instruct với prompt thô gọn nhẹ làm mô hình chủ lực. Buổi chiều, mình mở rộng kiểm thử mô hình trên video mới (video7.mp4, cắt đoạn vàng 16s từ 1:54 - 2:10 theo gợi ý của Mentor Tú). Khi chạy thử lần đầu trên video 7, model bị rò rỉ nhãn ngoài từ vựng (`walk`) và bỏ sót `get_off`. Mình đã bóc tách nguyên nhân kỹ thuật: do prompt cũ bị thiên kiến chữ "floor" và visual mark của túi bị thiếu ở các frame đầu, từ đó tối ưu lại Prompt hệ thống mang tính tổng quát mọi bề mặt (`surface`) kết hợp luật khóa từ vựng đóng (`STRICT CLOSED VOCABULARY`) để chuẩn bị cho việc hoàn thiện pipeline.
+
+---
+
 ## [YYYY-MM-DD]
 
 | Task | Khó khăn | Giải pháp | Kết quả | Status |

@@ -6,13 +6,15 @@ STRICT CONSTRAINTS:
 3. SYSTEMATIC INTERACTION RULES:
    - Person-Person interactions: Identify active physical contact or intentional social interaction. NEVER use 'get_off' for Person-Person pairs.
    - Person-Object interactions: Only predict manipulation verbs ('hold', 'carry') if a person is physically grasping the object.
-   - SPECIAL RULE FOR 'get_off': In this taxonomy, use 'get_off' ONLY to describe a person actively moving away from, releasing, or leaving an inanimate object behind (e.g., leaving an object stationary on the floor).
+   - SPECIAL RULE FOR 'get_off': In this taxonomy, use 'get_off' ONLY to describe a person actively moving away from, releasing, or leaving an inanimate object behind (e.g., leaving an object stationary on a surface like a floor, table, desk, or ground).
+   - Multi-phase Sequential Relations: A single person-object pair can have multiple relations occurring across different phases of the video (e.g., first 'hold' or 'carry' while holding the object, followed by 'get_off' when releasing or leaving the object stationary on a surface).
    - Vehicle Rules: Predicates like 'get_on', 'ride', 'drive' MUST ONLY be used if the object is explicitly a vehicle (bicycle, car, motorcycle, bus, train) or an animal (horse).
-   - Negative Pairs: If an object is resting stationary on the floor and a person merely walks past or approaches without physical contact, DO NOT predict any relation.
-   - Ground Truth Fidelity: Strictly report visual facts. Do not hallucinate actions that are not visible. If an object remains visible on the floor in the final frames, it is NOT picked up.
+   - Negative Pairs: If an object is resting stationary on a surface and a person merely walks past or approaches without physical contact, DO NOT predict any relation.
+   - STRICT CLOSED VOCABULARY: Select predicates ONLY from the 26 predefined categories. NEVER output out-of-vocabulary verbs (e.g., 'walk').
+   - Ground Truth Fidelity: Strictly report visual facts. Do not hallucinate actions that are not visible. If an object remains visible on a surface in the final frames, it is NOT picked up.
 4. Output format MUST be strictly a valid JSON object matching this schema:
 {
-  "temporal_summary": "<brief description of the progression of actions from early to late frames, explicitly noting any changes in the physical location or state of inanimate objects>",
+  "temporal_summary": "<brief description of the progression of actions from early to late frames, explicitly noting the state and movement timeline of inanimate objects (e.g., whether held/carried by a person, placed onto a surface, and whether the person moves away)>",
   "triplets": [
     {
       "subject": "[ID]",
