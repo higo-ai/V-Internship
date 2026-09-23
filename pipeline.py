@@ -503,10 +503,52 @@ out_writer.release()
 cap.release()
 print(f"Annotated clip written to: {output_video_path} ({len(processed_frames)} frames)")
 
-# 4. Uniform Frame Sampling for VLM (NUM_VLM_FRAMES = 8)
-print(f"Uniformly sampling {NUM_VLM_FRAMES} clean frames across clip...")
+# 4. Constrained Lifespan-Aware Adaptive Keyframe Sampling for VLM
+# Guarantees that sampled frames are not caught in momentary detector flickers
+# while preserving temporal equidistance within a narrow window (+/- 3 frames, ~0.1s)
+print(f"\n--- Adaptive Keyframe Sampling: Selecting {NUM_VLM_FRAMES} high-visibility frames ---")
 step = (len(processed_frames) - 1) / (NUM_VLM_FRAMES - 1) if NUM_VLM_FRAMES > 1 else 0
-sample_indices = [int(round(i * step)) for i in range(NUM_VLM_FRAMES)]
+
+# Compute active lifespans for stable persons [start_frame, end_frame]
+person_lifespans = {}
+for pid in stable_person_ids:
+    p_f_indices = [fd['frame_idx'] for fd in frame_detections if any(tid == pid for _, tid, _ in fd['persons'])]
+    if p_f_indices:
+        person_lifespans[pid] = (min(p_f_indices), max(p_f_indices))
+
+sample_indices = []
+WINDOW_RADIUS = 3  # Maximum +/- 3 frames search (~0.1s) to preserve temporal cadence
+
+for i in range(NUM_VLM_FRAMES):
+    s_ideal = int(round(i * step))
+    w_min = max(0, s_ideal - WINDOW_RADIUS)
+    w_max = min(len(processed_frames) - 1, s_ideal + WINDOW_RADIUS)
+
+    best_idx = s_ideal
+    best_score = float('inf')
+
+    for cand_idx in range(w_min, w_max + 1):
+        cand_f_num = processed_frames[cand_idx][0]
+        cand_fd = frame_detections[cand_idx]
+
+        # 1. Expected persons currently within their active lifespan
+        expected_pids = {pid for pid, (p_start, p_end) in person_lifespans.items() if p_start <= cand_f_num <= p_end}
+        present_pids = {tid for _, tid, _ in cand_fd['persons'] if tid in stable_person_ids}
+        missing_count = len(expected_pids - present_pids)
+
+        # 2. Penalty: heavy penalty if missing expected active entities, plus small distance penalty
+        cand_score = (missing_count * 1000) + abs(cand_idx - s_ideal)
+
+        if cand_score < best_score:
+            best_score = cand_score
+            best_idx = cand_idx
+
+    if best_idx != s_ideal:
+        shift_frames = best_idx - s_ideal
+        print(f"  [Adaptive Adjustment] Sample {i+1}: Shifted {shift_frames:+d} frames from idx {s_ideal} -> {best_idx} (rescued missing entity)")
+    else:
+        print(f"  [Ideal Equidistance] Sample {i+1}: Preserved exact ideal idx {s_ideal}")
+    sample_indices.append(best_idx)
 
 sampled_frame_files = []
 for order, s_idx in enumerate(sample_indices, 1):
@@ -543,15 +585,15 @@ else:
         "3. SYSTEMATIC INTERACTION RULES:\n"
         "   - Person-Person interactions: Identify active physical contact or intentional social interaction. NEVER use 'get_off' for Person-Person pairs.\n"
         "   - Person-Object interactions: Only predict manipulation verbs ('hold', 'carry') if a person is physically grasping the object.\n"
-        "   - SPECIAL RULE FOR 'get_off': In this taxonomy, use 'get_off' ONLY to describe a person actively moving away from, releasing, or leaving an inanimate object behind (e.g., leaving an object stationary on a surface like a floor, table, desk, or ground).\n"
-        "   - Multi-phase Sequential Relations: A single person-object pair can have multiple relations occurring across different phases of the video (e.g., first 'hold' or 'carry' while holding the object, followed by 'get_off' when releasing or leaving the object stationary on a surface).\n"
+        "   - SPECIAL RULE FOR 'get_off': In this taxonomy, use 'get_off' to describe a person releasing, placing down, or moving away from an inanimate object left on a surface (such as a floor, table, desk, or ground). Every predicted predicate MUST belong strictly to the 26 predefined categories with zero exceptions.\n"
+        "   - Multi-phase Sequential Relations: A single person-object pair can have multiple relations occurring across different phases of the video (e.g., first 'hold' or 'carry' while holding the object, followed by 'get_off' when releasing, placing down, or leaving the object stationary on a surface).\n"
         "   - Vehicle Rules: Predicates like 'get_on', 'ride', 'drive' MUST ONLY be used if the object is explicitly a vehicle (bicycle, car, motorcycle, bus, train) or an animal (horse).\n"
         "   - Negative Pairs: If an object is resting stationary on a surface and a person merely walks past or approaches without physical contact, DO NOT predict any relation.\n"
         "   - STRICT CLOSED VOCABULARY: Select predicates ONLY from the 26 predefined categories. NEVER output out-of-vocabulary verbs (e.g., 'walk').\n"
         "   - Ground Truth Fidelity: Strictly report visual facts. Do not hallucinate actions that are not visible. If an object remains visible on a surface in the final frames, it is NOT picked up.\n"
         "4. Output format MUST be strictly a valid JSON object matching this schema:\n"
         "{\n"
-        '  "temporal_summary": "<brief description of the progression of actions from early to late frames, explicitly noting the state and movement timeline of inanimate objects (e.g., whether held/carried by a person, placed onto a surface, and whether the person moves away)>",\n'
+        '  "temporal_summary": "<brief description of the sequence of visible actions from early to late frames, noting any physical contact between persons and the state of objects without assuming unobserved actions>",\n'
         '  "triplets": [\n'
         '    {\n'
         '      "subject": "[ID]",\n'
@@ -602,13 +644,12 @@ prompt_payload = {
         "Perform a systematic pair-by-pair check across the full time duration:\n"
         "- Examine ALL Person-Person combinations.\n"
         "- Examine ALL Person-Object combinations.\n\n"
-        "CRITICAL INSTRUCTION: First, write a temporal_summary describing the progression of actions across time from early frames to late frames. "
-        "In this summary, describe the object's movement timeline across the frames: whether it is initially held/carried by a person, placed onto a surface (table, desk, floor), and whether the person departs leaving it behind. "
-        "Do NOT invent actions not visible in the frames.\n\n"
+        "CRITICAL INSTRUCTION: First, write a temporal_summary describing the sequence of visible actions from early to late frames: "
+        "note any physical contact between persons, and observe the state of the object without assuming actions that are not clearly visible.\n\n"
         "PREDEFINED RELATION TAXONOMY (CLOSED VOCABULARY):\n"
         f"Every predicate in the 'relation' field MUST be an exact string match selected strictly from the 26 allowed categories: {relations_list}. All out-of-vocabulary verbs are strictly prohibited.\n"
-        "- Multi-phase Sequential Relations: A single person-object pair can have multiple relations occurring across different phases of the video (e.g., first 'hold' or 'carry' while holding the object, followed by 'get_off' when releasing or leaving the object stationary on a surface).\n"
-        "- To denote a person releasing, departing from, or leaving an entity stationary, use 'get_off'.\n"
+        "- Multi-phase Sequential Relations: A single person-object pair can have multiple relations occurring across different phases of the video (e.g., first 'hold' or 'carry' while holding the object, followed by 'get_off' when releasing, placing down, or leaving the object stationary on a surface).\n"
+        "- To denote a person releasing, placing down, departing from, or leaving an entity stationary, use 'get_off'.\n"
         "- If two entities have no physical contact or active interaction, omit that pair entirely (do not predict any relation).\n\n"
         'Respond strictly with the JSON object: {"temporal_summary": "...", "triplets": [{"subject": "[ID]", "relation": "<verb>", "object": "[ID]", "reason": "..."}]}.'
     ),
