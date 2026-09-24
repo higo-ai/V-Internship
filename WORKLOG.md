@@ -48,6 +48,20 @@
 
 ---
 
+## 2026-09-23
+
+| Task | Khó khăn | Giải pháp | Kết quả | Status |
+|---|---|---|---|---|
+| **Nâng cấp Pipeline thị giác đa cơ chế (Backward Association, Gap Filling, Adaptive Sampling)**:<br>Nâng cấp thuật toán xử lý dữ liệu để giải quyết triệt để các hạn chế thị giác trên `video7.mp4`. | Túi xách mang vào phòng bị thiếu bounding box ở các frame đầu; hiện tượng detector flicker ngắn khiến việc lấy mẫu cách đều dễ rơi trúng frame bị mất dấu người. | - Tích hợp Backward Spatio-Temporal Association dò ngược mark túi xách về tay người mang.<br>- Bổ sung Tracklet Gap Filling vá khoảng trống <= 5 frames.<br>- Tích hợp Constrained Lifespan-Aware Adaptive Sampling lấy mẫu thông minh (+-3 frames) ưu tiên frame đủ thực thể nhưng vẫn tôn trọng vòng đời khi người đã rời phòng. | Băm 8 frames sạch; chạy thực nghiệm lần 1 trên Video 7 đạt F1 = 1.0 (bắt đúng `carry` và `get_off`, triệt tiêu từ `walk`); commit lưu mốc `a5faea2`. | ✅ Done |
+| **Kiểm chứng chéo Video 1, tối ưu Prompt trung tính & Căn chỉnh phân loại (Taxonomy Grounding)**:<br>Thử nghiệm chéo để kiểm tra tính tổng quát hóa, bóc tách lỗi ảo giác và chuẩn hóa từ vựng đóng. | Khi test chéo Video 1, prompt mớm kịch bản làm model 3B bị ảo giác `hold`/`grab` và mất `touch` (F1 tụt 0.33); khi đổi sang prompt trung tính thì Video 7 lại tự sinh nhãn ngoài từ điển `place` ([X] Invalid). | - Khử mớm kịch bản bằng prompt trung tính tối giản (cân bằng quan sát tiếp xúc người và trạng thái vật thể).<br>- Căn chỉnh học thuật cho nhãn `get_off` (định nghĩa get_off bao hàm cả hành vi buông/đặt đồ xuống bề mặt theo chuẩn VidVRD mà không hardcode).<br>- Thêm cơ chế bảo vệ trong notebook Colab chống nạp lẫn frame cũ. | Video 7 đạt F1 = 1.0 tuyệt đối (xóa sạch lỗi Invalid `place`); Video 1 đạt Precision 100%, F1 = 0.80 (bắt chuẩn `touch` và `get_off`, sạch 100% ảo giác `hold`/`grab`); commit lưu mốc `85baba5`. | ✅ Done |
+
+**Tổng kết ngày:** Hôm nay mình tập trung nâng cấp toàn diện pipeline thị giác và chuẩn hóa hệ thống prompt trên cả hai phân cảnh video:
+1. Hoàn thiện `pipeline.py` với cơ chế dò vết ngược (Backward Association) để theo dấu túi xách trên tay người trước khi đặt xuống bàn, bổ sung Gap Filling vá lỗi mất dấu ngắn và thuật toán lấy mẫu thích ứng (Adaptive Sampling) chống flicker mà không làm méo mó nhịp thời gian.
+2. Khi kiểm chứng chéo trên Video 1, phát hiện hiện tượng prompt mớm kịch bản gây ảo giác `hold`/`grab` và mất nhãn `touch`. Mình đã bóc tách nguyên nhân, áp dụng giải pháp "dao mổ tối giản" khử hoàn toàn ám thị kịch bản, đồng thời căn chỉnh định nghĩa ngữ nghĩa nhãn `get_off` (bao gồm cả hành vi đặt đồ xuống bề mặt / placing down theo đúng quy ước phân loại của VidVRD).
+3. Kết quả nghiệm thu thực nghiệm trên Colab: Video 7 đạt F1 = 1.0 tuyệt đối (sạch bóng lỗi Invalid `place`), Video 1 đạt Precision 100%, F1 = 0.80 (khôi phục hoàn hảo quan hệ `touch` và `get_off`, triệt tiêu hoàn toàn ảo giác). Lưu trữ 2 mốc commit quan trọng `a5faea2` và `85baba5` lên GitHub repo.
+
+---
+
 ## [YYYY-MM-DD]
 
 | Task | Khó khăn | Giải pháp | Kết quả | Status |
