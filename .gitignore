@@ -27,3 +27,4 @@ data/preview_frames/
 .DS_Store
 Thumbs.db
 *.log
+*.ts
