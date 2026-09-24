@@ -580,26 +580,23 @@ else:
         "You are given a temporal sequence of video frames with numbered visual marks [ID] identifying subjects and objects. "
         "Your task is to detect all active visual relations occurring between the marked entities over time.\n\n"
         "STRICT CONSTRAINTS:\n"
-        f"1. You MUST strictly select relation predicates ONLY from these 26 predefined categories: {relations_list}.\n"
+        f"1. You MUST strictly select relation predicates ONLY from these 26 predefined categories: {relations_list}. All other verbs are strictly prohibited.\n"
         f"2. Entity subject and object classes belong strictly to the 60 predefined categories: {allowed_objects_60}.\n"
         "3. SYSTEMATIC INTERACTION RULES:\n"
-        "   - Person-Person interactions: Identify active physical contact or intentional social interaction. NEVER use 'get_off' for Person-Person pairs.\n"
-        "   - Person-Object interactions: Only predict manipulation verbs ('hold', 'carry') if a person is physically grasping the object.\n"
-        "   - SPECIAL RULE FOR 'get_off': In this taxonomy, use 'get_off' to describe a person releasing, placing down, or moving away from an inanimate object left on a surface (such as a floor, table, desk, or ground). Every predicted predicate MUST belong strictly to the 26 predefined categories with zero exceptions.\n"
-        "   - Multi-phase Sequential Relations: A single person-object pair can have multiple relations occurring across different phases of the video (e.g., first 'hold' or 'carry' while holding the object, followed by 'get_off' when releasing, placing down, or leaving the object stationary on a surface).\n"
-        "   - Vehicle Rules: Predicates like 'get_on', 'ride', 'drive' MUST ONLY be used if the object is explicitly a vehicle (bicycle, car, motorcycle, bus, train) or an animal (horse).\n"
-        "   - Negative Pairs: If an object is resting stationary on a surface and a person merely walks past or approaches without physical contact, DO NOT predict any relation.\n"
-        "   - STRICT CLOSED VOCABULARY: Select predicates ONLY from the 26 predefined categories. NEVER output out-of-vocabulary verbs (e.g., 'walk').\n"
-        "   - Ground Truth Fidelity: Strictly report visual facts. Do not hallucinate actions that are not visible. If an object remains visible on a surface in the final frames, it is NOT picked up.\n"
+        "   - Person-Person Contact: Active physical contact between persons (such as hands touching shoulders, arms, or bodies) is categorized as 'touch'.\n"
+        "   - Person-Object Manipulation: When a person holds and transports an object while moving or walking across frames, categorize as 'carry'. When a person holds an object statically in hand(s), categorize as 'hold'.\n"
+        "   - Zero-Displacement Inactive Clutter: If an object remains completely stationary in the exact same location across ALL frames without any movement or displacement, OMIT that pair entirely (a person merely walking past or standing near a stationary object on the floor/surface is NOT an interaction).\n"
+        "   - Temporal Transitions: If a person actively carries or holds an object in ANY frames, report that valid interaction even if the person places down or leaves the object stationary on a surface in subsequent frames.\n"
+        "   - Vehicle Rules: Predicates like 'get_on', 'get_off', 'ride', 'drive' MUST ONLY be used if the object is explicitly a vehicle (bicycle, car, motorcycle, bus, train) or an animal (horse).\n"
+        "   - Ground Truth Fidelity: Strictly report visual facts. Do not hallucinate actions that are not visible.\n"
         "4. Output format MUST be strictly a valid JSON object matching this schema:\n"
         "{\n"
-        '  "temporal_summary": "<brief description of the sequence of visible actions from early to late frames, noting any physical contact between persons and the state of objects without assuming unobserved actions>",\n'
         '  "triplets": [\n'
         '    {\n'
         '      "subject": "[ID]",\n'
         '      "relation": "<predicate>",\n'
         '      "object": "[ID]",\n'
-        '      "reason": "<brief explanation of why this relation is selected based on visual evidence>"\n'
+        '      "reason": "<brief explanation focusing strictly on the physical interaction between this subject and this object>"\n'
         '    }\n'
         '  ]\n'
         "}\n"
@@ -641,17 +638,15 @@ prompt_payload = {
     "vlm_user_prompt": (
         "Analyze all provided sequential frames of this surveillance video clip.\n"
         f"Detected entities with visual marks: {dynamic_entities_string}.\n\n"
-        "Perform a systematic pair-by-pair check across the full time duration:\n"
-        "- Examine ALL Person-Person combinations.\n"
-        "- Examine ALL Person-Object combinations.\n\n"
+        "Examine active interactions between the marked entities across time.\n\n"
         "CRITICAL INSTRUCTION: First, write a temporal_summary describing the sequence of visible actions from early to late frames: "
         "note any physical contact between persons, and observe the state of the object without assuming actions that are not clearly visible.\n\n"
         "PREDEFINED RELATION TAXONOMY (CLOSED VOCABULARY):\n"
         f"Every predicate in the 'relation' field MUST be an exact string match selected strictly from the 26 allowed categories: {relations_list}. All out-of-vocabulary verbs are strictly prohibited.\n"
-        "- Multi-phase Sequential Relations: A single person-object pair can have multiple relations occurring across different phases of the video (e.g., first 'hold' or 'carry' while holding the object, followed by 'get_off' when releasing, placing down, or leaving the object stationary on a surface).\n"
-        "- To denote a person releasing, placing down, departing from, or leaving an entity stationary, use 'get_off'.\n"
-        "- If two entities have no physical contact or active interaction, omit that pair entirely (do not predict any relation).\n\n"
-        'Respond strictly with the JSON object: {"temporal_summary": "...", "triplets": [{"subject": "[ID]", "relation": "<verb>", "object": "[ID]", "reason": "..."}]}.'
+        "- Predicates like 'get_on', 'get_off', 'ride', 'drive' apply ONLY to vehicles or animals.\n"
+        "- Only predict manipulation relations ('hold', 'carry') if a person physically grasps and supports the object with their hands.\n"
+        "- If a pair has no active interaction matching the 26 predefined categories, omit that pair entirely (do not force any relation).\n\n"
+        'Respond strictly with the JSON object: {"triplets": [{"subject": "[ID]", "relation": "<verb>", "object": "[ID]", "reason": "..."}]}.'
     ),
     "ground_truth_triplet_labels": (
         [
