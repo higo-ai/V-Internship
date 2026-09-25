@@ -639,13 +639,16 @@ prompt_payload = {
         "Analyze all provided sequential frames of this surveillance video clip.\n"
         f"Detected entities with visual marks: {dynamic_entities_string}.\n\n"
         "Examine active interactions between the marked entities across time.\n\n"
-        "CRITICAL INSTRUCTION: First, write a temporal_summary describing the sequence of visible actions from early to late frames: "
-        "note any physical contact between persons, and observe the state of the object without assuming actions that are not clearly visible.\n\n"
         "PREDEFINED RELATION TAXONOMY (CLOSED VOCABULARY):\n"
         f"Every predicate in the 'relation' field MUST be an exact string match selected strictly from the 26 allowed categories: {relations_list}. All out-of-vocabulary verbs are strictly prohibited.\n"
+        "- Strictly evaluate interactions ONLY between marked entities [ID]. Completely ignore unmarked objects or background clutter; NEVER substitute an unmarked item with a marked person.\n"
+        "- Predicates 'carry' and 'hold' apply strictly between a Person (subject) and a moveable Object (e.g., bag, suitcase). A person cannot 'carry' another person unless physically lifting them off the ground.\n"
         "- Predicates like 'get_on', 'get_off', 'ride', 'drive' apply ONLY to vehicles or animals.\n"
-        "- Only predict manipulation relations ('hold', 'carry') if a person physically grasps and supports the object with their hands.\n"
-        "- If a pair has no active interaction matching the 26 predefined categories, omit that pair entirely (do not force any relation).\n\n"
+        "- Categorize active physical contact between persons as 'touch'.\n"
+        "- Categorize a person holding and transporting an object while moving as 'carry', and holding statically as 'hold'.\n"
+        "- If an object remains stationary in the same location across all frames without movement, omit that pair.\n"
+        "- If an active interaction occurs in any frames, report that relation even if it ends later.\n"
+        "- In the 'reason' field, describe strictly the interaction between this subject and this object without referencing other entities.\n\n"
         'Respond strictly with the JSON object: {"triplets": [{"subject": "[ID]", "relation": "<verb>", "object": "[ID]", "reason": "..."}]}.'
     ),
     "ground_truth_triplet_labels": (

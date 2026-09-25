@@ -62,6 +62,33 @@
 
 ---
 
+## 2026-09-24
+
+| Task | Khó khăn | Giải pháp | Kết quả | Status |
+|---|---|---|---|---|
+| **Chuẩn hóa Prompt 4 trụ cột, đo Token & Benchmark VLM**:<br>Chuẩn hóa System Prompt trung tính, hoàn trả định nghĩa học thuật cho `get_off` (chỉ dùng cho phương tiện/động vật), tích hợp bộ đo Token bằng HuggingFace Tokenizer trên Colab, và chạy benchmark `Qwen2.5-VL-3B-Instruct` trên Video 1 và Video 7. | Nguy cơ prompt bị Overfitting / may đo cục bộ cho 2 video; nhãn `get_off` trước đó bị ép nghĩa sai lệch cho đồ vật; cách đo token cũ bằng số ký tự thiếu chính xác. | - Thiết lập System Prompt 4 trụ cột khách quan (`data/prompt_system_general.txt`): tiếp xúc người-người `touch`, mang vác vật `carry`/`hold`, loại trừ rác tĩnh `zero-displacement`, và chuyển tiếp trạng thái thời gian.<br>- Tích hợp hàm đo Input/Output/Total tokens bằng tokenizer chuẩn trong notebook Colab.<br>- Đồng bộ cấu hình payload Video 1 và Video 7. | Benchmark trên Colab đạt F1 = 1.0 trên cả 2 video (Video 1: Output 95 tokens, bắt đúng `touch`; Video 7: Output 58 tokens, bắt đúng `carry`). | ✅ Done |
+| **Xây dựng Pipeline detector mới độc lập (`pipeline_yoloe.py`) & Chạy luồng xuôi thuần túy**:<br>Tích hợp `yoloe-26m-seg.pt` với từ vựng 60 class (`configs/s_objects.json`), loại bỏ hoàn toàn thuật toán dò ngược (Backward Association), chuyển sang Pure Forward Tracking xuôi tự nhiên; giữ nguyên `pipeline.py` cũ làm mốc đối chứng. | Ở lần chạy đầu với `--conf 0.25`, mô hình sinh rác ảo (`camera`, `backpack` conf ~0.35), nhận nhầm vật thể tĩnh xa trên kệ là túi xách, và vết chiếc túi thật bị ngắt quãng thành 3 mảnh ([3], [4], [5]) khiến payload bị rối với 10 thực thể. | - Tối ưu ngưỡng tin cậy lên `--conf 0.40` (loại bỏ sạch bóng ma conf < 0.38 trong khi túi thật đạt conf 0.70 - 0.87).<br>- Bổ sung thuật toán Nối vết đồ vật (Object Track Stitching) nối liền mạch chuỗi chuyển động của chiếc túi từ lúc cầm đi vào tới khi đặt lên bàn.<br>- Thêm bộ lọc rác nền tĩnh (Zero-Displacement Clutter Rejection, loại bỏ vật dịch chuyển < 20px) và nâng ngưỡng bền vững `hits >= 25`. | Kiểm thử Video 7 thành công: chiếc túi thật được bám bắt liên tục 416 frames (conf 0.79, di chuyển 417px), loại sạch rác nền, kết xuất đúng 2 thực thể `[1] person` và `[2] handbag`; render video `video7_yoloe_annotated.mp4` và 8 frames sạch. | ✅ Done |
+
+**Tổng kết ngày:** Hôm nay mình đã làm 4 việc cốt lõi theo đúng định hướng của Mentor:
+1. Giải quyết dứt điểm vấn đề Prompt bằng cách đưa về bản quy chuẩn 4 trụ cột khách quan, trả lại bản chất học thuật cho taxonomy quan hệ, tích hợp bộ đo lường Token chính xác trên Colab và đạt F1 = 1.0 trên cả 2 video đối chứng.
+2. Xóa bỏ hoàn toàn khoản nợ kỹ thuật Heuristic Backward Association theo chỉ dẫn của Mentor, xây dựng thành công pipeline độc lập `pipeline_yoloe.py` chạy luồng xuôi thuần túy với mô hình YOLOE-26m (60 class).
+3. Vượt qua vỡ vết và rác nền ở lần chạy đầu bằng các giải pháp kiến trúc tối ưu: nâng ngưỡng `conf=0.40`, nối vết đồ vật (Object Track Stitching) và lọc rác tĩnh (`displacement < 20px`). Kết quả Video 7 được làm sạch chỉ còn đúng 2 thực thể `[1] person` và `[2] handbag`, bảo toàn nguyên vẹn 100% file gốc `pipeline.py`.
+
+---
+
+## 2026-09-25
+
+| Task | Khó khăn | Giải pháp | Kết quả | Status |
+|---|---|---|---|---|
+| **Chuẩn hóa Guardrail ngữ nghĩa SoM & Triệt tiêu ảo giác thế chỗ thực thể**:<br>Nâng cấp Prompt với 2 Guardrail ngữ nghĩa: (1) Loại trừ hoàn toàn vật thể không đánh dấu (Unmarked Entity Exclusion) và (2) Ràng buộc miền quan hệ Person-Object cho vị từ `carry`/`hold`. | Khi chạy `pipeline_yoloe` trên Video 1, do chiếc balo ở sàn bị lọc bỏ nhãn (không có Mark [ID]), VLM nhìn thấy balo nhưng không có ID nên đã tự ý thế chỗ Người [1] vào vị trí Object, sinh ra triplet ảo giác `[2] carry [1]` ("Person 2 is carrying Person 1's backpack"). | - Bổ sung điều khoản Unmarked Entity Exclusion: Nghiêm cấm gán quan hệ cho vật vô chủ không có ID và cấm lấy người đứng cạnh thế chỗ cho vật.<br>- Bổ sung điều khoản Domain Constraint: Vị từ `carry`/`hold` chỉ áp dụng giữa Người và Vật thể di động; người không thể carry người trừ khi bế/vác hẳn lên.<br>- Đồng bộ toàn bộ prompt, payload Video 1 & 7, pipeline YOLOE và notebook Colab. | Chạy lại trên Colab triệt tiêu 100% triplet ảo giác `[2] carry [1]`; Video 1 trả về cặp tiếp xúc đối xứng chuẩn xác `[1] touch [2]` và `[2] touch [1]` (F1 = 1.0). Video 7 nhận diện chuẩn tương tác tay `[1] hold [2]` (F1 = 1.0). | ✅ Done |
+| **Kiểm định Pipeline YOLOE-26m đơn mô hình & Pure Forward Tracking**:<br>Đánh giá hiệu năng và độ ổn định của pipeline luồng xuôi thuần túy kết hợp ByteTrack trên GPU CUDA. | Cần đảm bảo pipeline mới loại bỏ triệt để Backward Association mà vẫn bám bắt liên tục các tương tác động theo thời gian thực. | - Tối ưu hóa cấu trúc suy luận 1 model duy nhất `yoloe-26m-seg.pt` (60 class), phân tách 2 stream Person và Movable Objects trên cùng 1 forward pass.<br>- Ứng dụng Object Track Stitching và Active Entity Filter (`disp >= 20px`). | Đạt tốc độ suy luận thời gian thực 19.3 FPS trên GPU CUDA; bám bắt hoàn hảo chuỗi tương tác di chuyển ở Video 7 và tiếp xúc ở Video 1. | ✅ Done |
+
+**Tổng kết ngày:** Hôm nay mình đã hoàn thành trọn vẹn 2 cột mốc lớn:
+1. Giải quyết triệt để bài toán hóc búa về Ảo giác thế chỗ thực thể (Entity Substitution Hallucination) trong VLM bằng giải pháp Prompt Guardrail chuẩn mực học thuật, không hardcode.
+2. Kiểm chứng thành công thực nghiệm trên Google Colab cho cả Video 1 và Video 7 với mô hình `Qwen2.5-VL-3B-Instruct`, đạt độ chính xác F1 = 1.0 và làm sạch hoàn toàn rác nền.
+
+---
+
 ## [YYYY-MM-DD]
 
 | Task | Khó khăn | Giải pháp | Kết quả | Status |

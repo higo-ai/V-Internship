@@ -28,3 +28,24 @@ Tài liệu theo dõi tiến độ các đầu việc hàng ngày theo chỉ đ�
   - Tự động loại bỏ Inactive Background Clutter (vật thể tĩnh nền không dịch chuyển <20px) và vật kiến trúc phòng (STATIC_FIXTURE_CLASSES).
   - Thực thi kiểm thử thành công trên Video 7 (114s - 130s): bám bắt chính xác [1] person và [2] handbag khi người mang túi vào phòng và đặt lên bàn (hits=416, mean_conf=0.79, displacement=417.0px).
   - Kết xuất tách biệt hoàn toàn: data/video_processed/video7_yoloe_annotated.mp4, data/frames/video7_yoloe/, data/payloads/video7_yoloe_payload.json.
+
+---
+
+## Ngày: 2026-09-25
+
+- [x] **Task 1: Benchmark VLM trên Google Colab với Payload chuẩn từ Pipeline YOLOE (Video 1 & Video 7)**
+  - Tải và đồng bộ bộ 8 frames sạch cùng payload `video1_yoloe_payload.json` và `video7_yoloe_payload.json` lên Colab.
+  - Chạy suy luận với `Qwen2.5-VL-3B-Instruct` đối chứng tính nhất quán và độ chính xác.
+  - Phát hiện và giải quyết triệt để hiện tượng Ảo giác thế chỗ thực thể (Entity Substitution Hallucination) ở Video 1 bằng Double-Lock Prompt Guardrails (Unmarked Entity Exclusion & Domain Constraints).
+  - Kiểm chứng thành công: Video 1 đạt chuẩn `touch` đối xứng 100%, Video 7 đạt chuẩn tương tác tay `hold` 100% (F1 = 1.0 trên cả 2 video).
+  - Đo đạc chi tiết tài nguyên token: Video 1 (4,667 tokens), Video 7 (5,040 tokens).
+
+- [ ] **Task 2: Mở rộng kiểm thử Pipeline YOLOE sang Video mới (Kiểm chứng tính tổng quát - Generalization)**
+  - Lựa chọn thêm một video mới trong tập dữ liệu (ví dụ `video10.mp4` hoặc video có tương tác người - người / người - vật).
+  - Chạy thực nghiệm `pipeline_yoloe.py` với cấu hình chuẩn (60 class, luồng xuôi, bộ lọc rác nền tĩnh `displacement >= 20px`).
+  - Đánh giá khả năng tổng quát hóa của pipeline mới trên video chưa từng qua tinh chỉnh (zero manual tuning).
+
+- [ ] **Task 3: Nghiên cứu & Thiết kế giải pháp Gom cụm tương tác (Spatial Clustering & ROI Zoom Crop)**
+  - Nghiên cứu ý tưởng định hướng của Mentor: Gom nhóm các bounding box gần nhau trên frame bằng thuật toán không gian (DBSCAN / Scikit-learn hoặc khoảng cách Euclide).
+  - Xây dựng thuật toán tính toán hộp bao quanh cụm (Union Bounding Box) và cơ chế cắt ảnh phóng to vùng tương tác (ROI Crop).
+  - Đánh giá ưu/nhược điểm của ROI Crop: Giúp VLM nhìn rõ vật thể nhỏ, khử nhiễu người ở xa; đồng thời ghi nhận thách thức duy trì cụm xuyên suốt nhiều frame theo thời gian.

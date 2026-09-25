@@ -2,24 +2,23 @@
   "task": "Video Visual Relation Detection (VidVRD) - Surveillance Scenario",
   "scenario": "All-Pairs Visual Relation Detection between Marked Entities over Time",
   "model_target": "Qwen/Qwen2.5-VL-3B-Instruct",
+  "pipeline_variant": "unified_yoloe_forward_tracking",
   "clip_info": {
-    "source_video": "video7.mp4",
-    "frames_directory": "data/frames/video7",
-    "clip_duration_seconds": 16.0,
-    "start_timestamp": "114.0s",
-    "end_timestamp": "130.0s",
-    "total_clip_frames": 480,
+    "source_video": "video1.mp4",
+    "frames_directory": "data/frames/video1_yoloe",
+    "clip_duration_seconds": 8.0,
+    "start_timestamp": "44.0s",
     "sampled_frames_count": 8,
     "tuning_features": [
-      "Decoupled YOLO Architecture: tracker_model (ByteTrack) and detector_model (Object Detection)",
-      "Dynamic Spatial Velocity Clustering: Detects stationary objects via zero displacement variance (std < 10px, hits >= 30)",
-      "Backward Spatio-Temporal Association: Automatically extends object marks to carrier person before drop",
-      "Taxonomy Alignment: Strictly mapped and filtered to official 60 S/Objects taxonomy (s_objects.json)",
-      "Zero Hardcoded Coordinates: Fully automatic spatial cluster anchoring across any video scene",
-      "Dynamic ID Assignment: Guaranteed collision-free mark IDs allocated dynamically based on active tracks",
-      "Temporal Smoothness: Uniform frame sampling paired with language timestamps",
-      "100% Agnostic System Prompt: No specific IDs or answer-leaking suggestions",
-      "Multi-Phase Temporal Prompt: Explicitly prompts for sequential phase transitions (hold/carry -> get_off)",
+      "Unified Single-Model Architecture: 100% yoloe-26m-seg.pt for all 60 s_objects.json classes",
+      "Single Forward Pass: Synchronous person tracking and open-vocabulary object candidate detection",
+      "Zero Dual-Model Taxonomy Conflict: Complete elimination of separate COCO yolo11n model",
+      "Pure Forward Tracking: Zero backward spatio-temporal association, zero retroactive heuristics",
+      "Object Tracklet Stitching: Smooth temporal bridging across carrier locomotion and placement",
+      "Active Entity Spatio-Temporal Filter: Rejects zero-displacement clutter (disp < 20px) and static fixtures",
+      "Stationary Forward-Fill: Persists placed objects resting on surfaces until clip end",
+      "Visibility-Aware Adaptive Sampling: Selects 8 pristine frames maximizing entity visibility",
+      "Sterile 4-Pillar Prompt: Zero temporal_summary hallucination traps, zero hardcoded hints",
       "Closed-Taxonomy Mapping Guardrail: Strictly maps visual actions to 26 benchmark predicates"
     ]
   },
@@ -30,7 +29,11 @@
     },
     {
       "mark_id": "[2]",
-      "class_label": "handbag"
+      "class_label": "person"
+    },
+    {
+      "mark_id": "[3]",
+      "class_label": "person"
     }
   ],
   "allowed_objects_vocabulary_60": [
@@ -124,29 +127,29 @@
     "wave"
   ],
   "visual_prompt_frames_sequence": [
-    "frame_01_113.98s.jpg",
-    "frame_02_116.25s.jpg",
-    "frame_03_118.55s.jpg",
-    "frame_04_120.82s.jpg",
-    "frame_05_123.12s.jpg",
-    "frame_06_125.39s.jpg",
-    "frame_07_127.69s.jpg",
-    "frame_08_129.96s.jpg"
+    "frame_01_43.98s.jpg",
+    "frame_02_45.11s.jpg",
+    "frame_03_46.25s.jpg",
+    "frame_04_47.38s.jpg",
+    "frame_05_48.55s.jpg",
+    "frame_06_49.68s.jpg",
+    "frame_07_50.82s.jpg",
+    "frame_08_51.95s.jpg"
   ],
   "vlm_system_prompt": "You are an advanced Video Visual Relation Detection (VidVRD) AI for surveillance analytics. You are given a temporal sequence of video frames with numbered visual marks [ID] identifying subjects and objects. Your task is to detect all active visual relations occurring between the marked entities over time.\n\nSTRICT CONSTRAINTS:\n1. You MUST strictly select relation predicates ONLY from these 26 predefined categories: ['bite', 'carry', 'clean', 'cut', 'drive', 'feed', 'get_off', 'get_on', 'grab', 'hit', 'hold', 'hug', 'kick', 'kiss', 'knock', 'lean_on', 'lick', 'lift', 'play(instrument)', 'pull', 'push', 'ride', 'shake_hand_with', 'throw', 'touch', 'wave']. All other verbs are strictly prohibited.\n2. Entity subject and object classes belong strictly to the 60 predefined categories: ['bird', 'cattle', 'dog', 'horse', 'lizard', 'rabbit', 'sheep', 'snake', 'turtle', 'chicken', 'duck', 'cat', 'pig', 'goat', 'person', 'child', 'bicycle', 'bus', 'car', 'motorcycle', 'train', 'baby_seat', 'baby_walker', 'stop_sign', 'traffic_light', 'truck', 'scooter', 'ball', 'skateboard', 'sofa', 'bread', 'cake', 'dish', 'fruits', 'vegetables', 'backpack', 'camera', 'cellphone', 'handbag', 'laptop', 'suitcase', 'bat', 'racket', 'toy', 'bottle', 'chair', 'cup', 'electric_fan', 'faucet', 'sink', 'oven', 'microwave', 'refrigerator', 'screen', 'stool', 'table', 'toilet', 'guitar', 'piano', 'bench'].\n3. SYSTEMATIC INTERACTION RULES:\n   - Unmarked Entity Exclusion: You MUST strictly evaluate interactions ONLY between entities that have an explicit visual mark [ID]. Completely IGNORE any unmarked background objects, clutter, or furniture. You are strictly prohibited from predicting relations for unmarked objects or substituting an unmarked object with an adjacent marked person.\n   - Person-Object Manipulation: Predicates 'carry' and 'hold' describe a Person manipulating a moveable Object (e.g., handbag, backpack, suitcase, bottle). A person CANNOT 'carry' or 'hold' another person unless visibly lifting them off the ground. Categorize a person holding and transporting an object while moving or walking across frames as 'carry'. Categorize a person holding an object statically in hand(s) as 'hold'.\n   - Person-Person Contact: Active physical contact between persons (such as hands touching shoulders, arms, or bodies) is categorized as 'touch'.\n   - Zero-Displacement Inactive Clutter: If an object remains completely stationary in the exact same location across ALL frames without any movement or displacement, OMIT that pair entirely (a person merely walking past or standing near a stationary object on the floor/surface is NOT an interaction).\n   - Temporal Transitions: If a person actively carries or holds an object in ANY frames, report that valid interaction even if the person places down or leaves the object stationary on a surface in subsequent frames.\n   - Vehicle Rules: Predicates like 'get_on', 'get_off', 'ride', 'drive' MUST ONLY be used if the object is explicitly a vehicle (bicycle, car, motorcycle, bus, train) or an animal (horse).\n   - Ground Truth Fidelity: Strictly report visual facts. Do not hallucinate actions that are not visible.\n4. Output format MUST be strictly a valid JSON object matching this schema:\n{\n  \"triplets\": [\n    {\n      \"subject\": \"[ID]\",\n      \"relation\": \"<predicate>\",\n      \"object\": \"[ID]\",\n      \"reason\": \"<brief explanation focusing strictly on the physical interaction between this subject and this object>\"\n    }\n  ]\n}\n5. DO NOT output any markdown code blocks, explanations, or conversational text. Output ONLY the raw JSON object.",
-  "vlm_user_prompt": "Analyze all provided sequential frames of this surveillance video clip.\nDetected entities with visual marks: [1] (person), [2] (handbag).\n\nExamine active interactions between the marked entities across time.\n\nPREDEFINED RELATION TAXONOMY (CLOSED VOCABULARY):\nEvery predicate in the 'relation' field MUST be an exact string match selected strictly from the 26 allowed categories: ['bite', 'carry', 'clean', 'cut', 'drive', 'feed', 'get_off', 'get_on', 'grab', 'hit', 'hold', 'hug', 'kick', 'kiss', 'knock', 'lean_on', 'lick', 'lift', 'play(instrument)', 'pull', 'push', 'ride', 'shake_hand_with', 'throw', 'touch', 'wave']. All out-of-vocabulary verbs are strictly prohibited.\n- Strictly evaluate interactions ONLY between marked entities [ID]. Completely ignore unmarked objects or background clutter; NEVER substitute an unmarked item with a marked person.\n- Predicates 'carry' and 'hold' apply strictly between a Person (subject) and a moveable Object (e.g., bag, suitcase). A person cannot 'carry' another person unless physically lifting them off the ground.\n- Predicates like 'get_on', 'get_off', 'ride', 'drive' apply ONLY to vehicles or animals.\n- Categorize active physical contact between persons as 'touch'.\n- Categorize a person holding and transporting an object while moving as 'carry', and holding statically as 'hold'.\n- If an object remains stationary in the same location across all frames without movement, omit that pair.\n- If an active interaction occurs in any frames, report that relation even if it ends later.\n- In the 'reason' field, describe strictly the interaction between this subject and this object without referencing other entities.\n\nRespond strictly with the JSON object: {\"triplets\": [{\"subject\": \"[ID]\", \"relation\": \"<verb>\", \"object\": \"[ID]\", \"reason\": \"...\"}]}.",
+  "vlm_user_prompt": "Analyze all provided sequential frames of this surveillance video clip.\nDetected entities with visual marks: [1] (person), [2] (person), [3] (person).\n\nExamine active interactions between the marked entities across time.\n\nPREDEFINED RELATION TAXONOMY (CLOSED VOCABULARY):\nEvery predicate in the 'relation' field MUST be an exact string match selected strictly from the 26 allowed categories: ['bite', 'carry', 'clean', 'cut', 'drive', 'feed', 'get_off', 'get_on', 'grab', 'hit', 'hold', 'hug', 'kick', 'kiss', 'knock', 'lean_on', 'lick', 'lift', 'play(instrument)', 'pull', 'push', 'ride', 'shake_hand_with', 'throw', 'touch', 'wave']. All out-of-vocabulary verbs are strictly prohibited.\n- Strictly evaluate interactions ONLY between marked entities [ID]. Completely ignore unmarked objects or background clutter; NEVER substitute an unmarked item with a marked person.\n- Predicates 'carry' and 'hold' apply strictly between a Person (subject) and a moveable Object (e.g., bag, suitcase). A person cannot 'carry' another person unless physically lifting them off the ground.\n- Predicates like 'get_on', 'get_off', 'ride', 'drive' apply ONLY to vehicles or animals.\n- Categorize active physical contact between persons as 'touch'.\n- Categorize a person holding and transporting an object while moving as 'carry', and holding statically as 'hold'.\n- If an object remains stationary in the same location across all frames without movement, omit that pair.\n- If an active interaction occurs in any frames, report that relation even if it ends later.\n- In the 'reason' field, describe strictly the interaction between this subject and this object without referencing other entities.\n\nRespond strictly with the JSON object: {\"triplets\": [{\"subject\": \"[ID]\", \"relation\": \"<verb>\", \"object\": \"[ID]\", \"reason\": \"...\"}]}.",
   "ground_truth_triplet_labels": [
     {
       "subject": "[1]",
-      "relation": "hold",
+      "relation": "touch",
       "object": "[2]",
-      "evidence": "Person [1] carries and holds handbag [2] while walking into the room"
+      "evidence": "Person [1] has physical contact / touches Person [2]'s arm/shoulder during parting"
     },
     {
-      "subject": "[1]",
-      "relation": "get_off",
-      "object": "[2]",
-      "evidence": "Person [1] places handbag [2] on the table, releases it, and departs from the room"
+      "subject": "[2]",
+      "relation": "touch",
+      "object": "[1]",
+      "evidence": "Person [2] has physical contact / touches Person [1]'s arm/shoulder during parting"
     }
   ]
 }

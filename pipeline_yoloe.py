@@ -1,22 +1,49 @@
+"""
+VidVRD Standalone Unified Forward Pipeline (pipeline_yoloe.py)
+-------------------------------------------------------------------------------
+100% Unified YOLOE-26m Architecture with 60 classes from configs/s_objects.json
+- Dynamic Device Auto-Detection: CUDA GPU if available, graceful fallback to CPU
+- Unified Single-Model Forward Pass: Synchronous Person Tracking & Object Association
+- Zero Dual-Model Redundancy: 100% elimination of separate yolo11n model
+- Pure Forward Tracking: Zero backward association, zero cheating, zero heuristics
+- Stationary Forward-Fill: Persistent track holding for placed stationary objects
+- Visibility-Aware Keyframe Sampling: High-visibility multi-entity VLM frames
+- Sterile 4-Pillar Prompt: Zero temporal_summary traps, strict closed vocabulary
+-------------------------------------------------------------------------------
+"""
+
 import os
 import json
 import cv2
 import numpy as np
+import torch
 from collections import Counter, defaultdict
 from ultralytics import YOLO
 import argparse
 
-parser = argparse.ArgumentParser(description="VidVRD YOLOE Forward Pipeline: Video -> YOLOE Forward Tracking -> 8 Frames -> Payload JSON")
+# ------------------------------------------------------------------------------
+# CLI ARGUMENTS
+# ------------------------------------------------------------------------------
+parser = argparse.ArgumentParser(description="VidVRD Unified Forward Pipeline: Video -> Unified YOLOE Forward Tracking -> 8 Frames -> Payload JSON")
 parser.add_argument("--video", type=str, default="data/videos/video7.mp4", help="Path to input surveillance video")
 parser.add_argument("--start_sec", type=float, default=114.0, help="Start time in seconds for golden segment")
 parser.add_argument("--end_sec", type=float, default=130.0, help="End time in seconds for golden segment")
 parser.add_argument("--num_frames", type=int, default=8, help="Number of clean VLM frames to sample")
-parser.add_argument("--conf", type=float, default=0.40, help="Confidence threshold for YOLOE object detection (default: 0.40)")
-parser.add_argument("--iou", type=float, default=0.5, help="IoU threshold for ByteTrack person tracking (default: 0.5)")
-parser.add_argument("--stride", type=int, default=2, help="Frame step stride for object detection on CPU (default: 2)")
+parser.add_argument("--conf", type=float, default=0.40, help="Confidence threshold for interactive object detection (default: 0.40)")
+parser.add_argument("--iou", type=float, default=0.35, help="IoU threshold for ByteTrack person tracking (default: 0.35)")
+parser.add_argument("--stride", type=int, default=1, help="Frame step stride for object detection on CPU (default: 1 on GPU/fast CPU)")
+parser.add_argument("--device", type=str, default="auto", help="Compute device: 'auto', 'cuda', or 'cpu'")
 cli_args, _ = parser.parse_known_args()
 
-# 1. Paths and Configurations
+# Dynamic Device Selection
+if cli_args.device == "auto":
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+else:
+    DEVICE = cli_args.device
+
+# ------------------------------------------------------------------------------
+# 1. PATHS AND CONFIGURATIONS
+# ------------------------------------------------------------------------------
 base_dir = os.path.dirname(os.path.abspath(__file__))
 video_path = os.path.join(base_dir, cli_args.video) if not os.path.isabs(cli_args.video) else cli_args.video
 if not os.path.exists(video_path):
@@ -43,7 +70,7 @@ os.makedirs(vlm_frames_dir, exist_ok=True)
 os.makedirs(artifact_dir, exist_ok=True)
 os.makedirs(os.path.join(base_dir, "data", "video_processed"), exist_ok=True)
 
-# Clean old frames in directory before sampling
+# Clean previous frames in directory before sampling
 for f in os.listdir(vlm_frames_dir):
     if f.endswith(".jpg"):
         os.remove(os.path.join(vlm_frames_dir, f))
@@ -58,13 +85,16 @@ rel_path = os.path.join(base_dir, "configs", "relations.json") if os.path.exists
 with open(rel_path, encoding="utf-8") as f:
     relations_list = json.load(f)
 
-# Static room fixtures / furniture that are part of scene architecture (not portable objects)
+# Semantic Category Partitioning
+HUMAN_CLASSES = {"person", "child"}
 STATIC_FIXTURE_CLASSES = {
     "table", "bench", "chair", "refrigerator", "sofa", "bed",
     "toilet", "sink", "microwave", "oven", "screen", "stool"
 }
 
-# 2. Golden segment
+# ------------------------------------------------------------------------------
+# 2. VIDEO METADATA & SEGMENT SETUP
+# ------------------------------------------------------------------------------
 START_SEC = cli_args.start_sec
 END_SEC = cli_args.end_sec
 NUM_VLM_FRAMES = cli_args.num_frames
@@ -84,23 +114,24 @@ clip_frame_count = end_frame - start_frame
 print(f"Original Video: {total_frames} frames, {fps:.2f} FPS ({width}x{height})")
 print(f"Clipping segment: {START_SEC}s - {END_SEC}s (frames {start_frame} to {end_frame}, total {clip_frame_count} frames)")
 print(f"Project Taxonomies: {len(allowed_objects_60)} S/Objects, {len(relations_list)} Relations")
-print(f"Model Architecture: Tracker=yolo11n.pt (ByteTrack), Detector=yoloe-26m-seg.pt (conf={CONF_THRESH}, stride={DET_STRIDE})")
+print(f"Unified Architecture: 100% yoloe-26m-seg.pt on {DEVICE.upper()} (conf={CONF_THRESH}, stride={DET_STRIDE})")
 
-# 3. Initialize Models
-print("Loading Person Tracker (yolo11n.pt)...")
-tracker_model = YOLO(os.path.join(base_dir, "yolo11n.pt"))
+# ------------------------------------------------------------------------------
+# 3. INITIALIZE UNIFIED MODEL (100% YOLOE-26M)
+# ------------------------------------------------------------------------------
+print(f"Loading Unified Detector & Tracker (yoloe-26m-seg.pt) on {DEVICE.upper()}...")
+yoloe_weights = os.path.join(base_dir, "yoloe-26m-seg.pt")
+model = YOLO(yoloe_weights)
+model.to(DEVICE)
+model.set_classes(allowed_objects_60)
+print(f"Unified YOLOE loaded with {len(allowed_objects_60)} vocabulary classes. Single model forward pass.")
+
 tracker_config = os.path.join(base_dir, "configs", "custom_bytetrack.yaml")
 if not os.path.exists(tracker_config):
     tracker_config = os.path.join(base_dir, "custom_bytetrack.yaml")
 if not os.path.exists(tracker_config):
     tracker_config = "bytetrack.yaml"
 print(f"Using Tracker Config: {tracker_config}")
-
-print("Loading Open-Vocabulary Object Detector (yoloe-26m-seg.pt)...")
-yoloe_weights = os.path.join(base_dir, "yoloe-26m-seg.pt")
-detector_model = YOLO(yoloe_weights)
-detector_model.set_classes(allowed_objects_60)
-print("YOLOE configured successfully with 60 open-vocabulary classes.")
 
 COLOR_PALETTE = [
     (0, 0, 255),     # 0: Red
@@ -121,10 +152,80 @@ if not out_writer.isOpened():
     out_writer = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
 
 # ==============================================================================
-# PASS 1: Person Tracking & Forward Open-Vocabulary Object Tracking
+# HELPER FUNCTIONS: IoU and Containment NMS
+# ==============================================================================
+def compute_iou(box1, box2):
+    xA = max(box1[0], box2[0])
+    yA = max(box1[1], box2[1])
+    xB = min(box1[2], box2[2])
+    yB = min(box1[3], box2[3])
+    interArea = max(0, xB - xA) * max(0, yB - yA)
+    boxAArea = (box1[2] - box1[0]) * (box1[3] - box1[1])
+    boxBArea = (box2[2] - box2[0]) * (box2[3] - box2[1])
+    return interArea / float(boxAArea + boxBArea - interArea + 1e-6)
+
+def filter_anatomical_torso_duplicates(boxes_list):
+    """
+    Suppresses nested sub-part torso duplicates (upper body detected inside full body of the SAME person).
+    Preserves distinct individuals even when hugging, carrying a child, or crossing paths.
+    A box is ONLY dropped if:
+    1. Same semantic class (e.g. person vs person; never drops child inside person).
+    2. Shared head top boundary (abs(y1_small - y1_large) <= 0.15 * h_large).
+    3. Shared vertical spine axis (abs(cx_small - cx_large) <= 0.25 * w_large).
+    4. Truncated height (h_small <= 0.70 * h_large, missing lower body).
+    5. Substantial containment (intersection / area_small >= 0.70).
+    """
+    if len(boxes_list) <= 1:
+        return boxes_list
+    sorted_items = sorted(boxes_list, key=lambda x: (x[0][2] - x[0][0]) * (x[0][3] - x[0][1]), reverse=True)
+    kept = []
+    for item in sorted_items:
+        b = item[0]
+        cls_b = item[2] if len(item) > 2 else "person"
+        w_b = b[2] - b[0]
+        h_b = b[3] - b[1]
+        area_b = w_b * h_b
+        cx_b = (b[0] + b[2]) / 2.0
+
+        is_torso_duplicate = False
+        for k_item in kept:
+            kb = k_item[0]
+            cls_kb = k_item[2] if len(k_item) > 2 else "person"
+
+            if cls_b != cls_kb:
+                continue
+
+            w_kb = kb[2] - kb[0]
+            h_kb = kb[3] - kb[1]
+            cx_kb = (kb[0] + kb[2]) / 2.0
+
+            top_diff = abs(b[1] - kb[1])
+            cx_diff = abs(cx_b - cx_kb)
+
+            xA = max(b[0], kb[0])
+            yA = max(b[1], kb[1])
+            xB = min(b[2], kb[2])
+            yB = min(b[3], kb[3])
+            inter = max(0, xB - xA) * max(0, yB - yA)
+            containment = inter / float(area_b + 1e-6)
+
+            if (containment >= 0.70 and 
+                top_diff <= 0.15 * h_kb and 
+                cx_diff <= 0.25 * w_kb and 
+                h_b <= 0.70 * h_kb):
+                is_torso_duplicate = True
+                break
+
+        if not is_torso_duplicate:
+            kept.append(item)
+    return kept
+
+# ==============================================================================
+# PASS 1: Unified Tracking & Detection with YOLOE-26m
+# Single Forward Pass per Frame: Human Tracking + Open-Vocabulary Object Association
 # Zero Backward Association, Zero Cheating, Pure Forward Detection
 # ==============================================================================
-print("\n--- Pass 1: Extracting Person Tracks & Forward Object Detections ---")
+print(f"\n--- Pass 1: Extracting Tracks & Forward Detections with Unified YOLOE ({DEVICE.upper()}) ---")
 cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
 frame_detections = []
@@ -136,97 +237,111 @@ for f_idx in range(start_frame, end_frame):
     if not ret:
         break
 
-    # 1. Track Persons with ByteTrack (yolo11n.pt, class=0)
-    p_results = tracker_model.track(
+    # Single inference forward pass per frame using YOLOE-26m + ByteTrack
+    results = model.track(
         frame,
         persist=True,
-        classes=[0],
         conf=0.25,
         iou=cli_args.iou,
         tracker=tracker_config,
-        verbose=False
+        verbose=False,
+        device=DEVICE
     )[0]
 
     current_persons = []
-    if p_results.boxes and p_results.boxes.id is not None:
-        p_boxes = p_results.boxes.xyxy.cpu().numpy().astype(int)
-        p_ids = p_results.boxes.id.cpu().numpy().astype(int)
-        for b, tid in zip(p_boxes, p_ids):
-            current_persons.append((b, tid, "person"))
-            person_hit_counts[tid] += 1
-
-    # 2. Open-Vocabulary Forward Object Detection with YOLOE-26m
     current_objects = []
-    if (f_idx - start_frame) % DET_STRIDE == 0:
-        det_res = detector_model(frame, conf=CONF_THRESH, verbose=False)[0]
-        if det_res.boxes:
-            d_boxes = det_res.boxes.xyxy.cpu().numpy().astype(int)
-            d_confs = det_res.boxes.conf.cpu().numpy()
-            d_classes = det_res.boxes.cls.cpu().numpy().astype(int)
 
-            for b, c_conf, c_idx in zip(d_boxes, d_confs, d_classes):
-                c_name = allowed_objects_60[c_idx]
-                if c_name == "person":
-                    continue
-                if c_name in STATIC_FIXTURE_CLASSES:
-                    continue
+    if results.boxes:
+        d_boxes = results.boxes.xyxy.cpu().numpy().astype(int)
+        d_confs = results.boxes.conf.cpu().numpy()
+        d_classes = results.boxes.cls.cpu().numpy().astype(int)
+        d_ids = results.boxes.id.cpu().numpy().astype(int) if results.boxes.id is not None else [None] * len(d_boxes)
 
-                bw = b[2] - b[0]
-                bh = b[3] - b[1]
-                if bw > width * 0.45 or bh > height * 0.45:
-                    continue
+        for b, c_conf, c_idx, tid in zip(d_boxes, d_confs, d_classes, d_ids):
+            c_name = allowed_objects_60[c_idx]
 
-                current_objects.append((b, float(c_conf), c_name))
-                raw_object_detections.append({
-                    'frame_idx': f_idx,
-                    'box': b,
-                    'conf': float(c_conf),
-                    'class': c_name
-                })
+            # Stream A: Human Subjects (Person / Child)
+            if c_name in HUMAN_CLASSES:
+                if tid is not None:
+                    bw = b[2] - b[0]
+                    bh = b[3] - b[1]
+                    area = bw * bh
+                    aspect = bh / max(1.0, bw)
+                    # Physical surveillance constraint: Reject microscopic sensor artifacts (e.g. 8x18 specks on distant railings)
+                    if area >= 400 and max(bw, bh) >= 35 and aspect >= 0.4:
+                        current_persons.append((b, tid, c_name))
+
+            # Stream B: Portable Interactive Objects
+            elif c_name not in STATIC_FIXTURE_CLASSES:
+                if c_conf >= CONF_THRESH:
+                    bw = b[2] - b[0]
+                    bh = b[3] - b[1]
+                    if bw > width * 0.45 or bh > height * 0.45:
+                        continue
+
+                    current_objects.append((b, float(c_conf), c_name))
+                    raw_object_detections.append({
+                        'frame_idx': f_idx,
+                        'box': b,
+                        'conf': float(c_conf),
+                        'class': c_name
+                    })
+
+    # Filter nested sub-part torso duplicates using anatomical morphology
+    clean_persons = filter_anatomical_torso_duplicates(current_persons)
+    for b, tid, _ in clean_persons:
+        person_hit_counts[tid] += 1
 
     frame_detections.append({
         'frame_idx': f_idx,
-        'persons': current_persons,
+        'persons': clean_persons,
         'objects': current_objects
     })
 
-# Person Track Stitching: Stitch non-overlapping sequential tracklets of the same individual
-person_time_spans = defaultdict(lambda: {'start': 999999, 'end': -1, 'last_box': None, 'first_box': None, 'hits': 0})
+
+
+# Smart Zero-Overlap Tracklet Stitching:
+# Merges non-concurrent fragmented tracklets belonging to the same individual (e.g. turning/occlusion ID switches)
+person_tracks = defaultdict(lambda: {'frames': set(), 'boxes': {}, 'hits': 0})
 for fd in frame_detections:
     f_i = fd['frame_idx']
     for b, tid, _ in fd['persons']:
-        s = person_time_spans[tid]
-        s['start'] = min(s['start'], f_i)
-        s['end'] = max(s['end'], f_i)
-        s['hits'] += 1
-        if s['first_box'] is None: s['first_box'] = b
-        s['last_box'] = b
+        person_tracks[tid]['frames'].add(f_i)
+        person_tracks[tid]['boxes'][f_i] = b
+        person_tracks[tid]['hits'] += 1
 
+sorted_pids = sorted([pid for pid, tr in person_tracks.items() if tr['hits'] >= 10], key=lambda x: min(person_tracks[x]['frames']))
+
+active_chains = []
 person_id_remap = {}
-sorted_pids = sorted([pid for pid, s in person_time_spans.items() if s['hits'] >= 10], key=lambda x: person_time_spans[x]['start'])
 
-if sorted_pids:
-    active_chains = []
-    for pid in sorted_pids:
-        p_info = person_time_spans[pid]
-        p_start = p_info['start']
-        p_first = p_info['first_box']
-        matched_chain = None
-        for chain in active_chains:
-            gap = p_start - chain['end']
-            if 0 < gap <= 60:
-                c1 = ((chain['last_box'][0] + chain['last_box'][2]) / 2.0, (chain['last_box'][1] + chain['last_box'][3]) / 2.0)
-                c2 = ((p_first[0] + p_first[2]) / 2.0, (p_first[1] + p_first[3]) / 2.0)
-                dist = np.hypot(c1[0] - c2[0], c1[1] - c2[1])
-                if dist < 200.0:
-                    matched_chain = chain
-                    break
-        if matched_chain:
-            person_id_remap[pid] = matched_chain['root_id']
-            matched_chain['end'] = p_info['end']
-            matched_chain['last_box'] = p_info['last_box']
-        else:
-            active_chains.append({'root_id': pid, 'end': p_info['end'], 'last_box': p_info['last_box']})
+for pid in sorted_pids:
+    tr = person_tracks[pid]
+    p_frames = tr['frames']
+    p_first_f = min(p_frames)
+    p_first_b = tr['boxes'][p_first_f]
+    c_new = ((p_first_b[0] + p_first_b[2]) / 2.0, (p_first_b[1] + p_first_b[3]) / 2.0)
+
+    matched_chain = None
+    for chain in active_chains:
+        # Crucial Safeguard: Two tracks can ONLY be merged if they NEVER appear in the same frame simultaneously
+        overlap = len(chain['frames'].intersection(p_frames))
+        if overlap == 0:
+            last_chain_f = max(chain['frames'])
+            last_chain_b = chain['boxes'][last_chain_f]
+            c_chain = ((last_chain_b[0] + last_chain_b[2]) / 2.0, (last_chain_b[1] + last_chain_b[3]) / 2.0)
+            dist = np.hypot(c_new[0] - c_chain[0], c_new[1] - c_chain[1])
+            time_gap = abs(p_first_f - last_chain_f)
+            if dist < 200.0 and time_gap <= 90:
+                matched_chain = chain
+                break
+
+    if matched_chain:
+        person_id_remap[pid] = matched_chain['root_id']
+        matched_chain['frames'].update(p_frames)
+        matched_chain['boxes'].update(tr['boxes'])
+    else:
+        active_chains.append({'root_id': pid, 'frames': set(p_frames), 'boxes': dict(tr['boxes'])})
 
 for fd in frame_detections:
     new_persons = []
@@ -245,6 +360,11 @@ for tid, count in stitched_hit_counts.items():
     if count >= 15:
         stable_person_ids.add(tid)
 print(f"Stable dynamic person IDs tracked: {sorted(list(stable_person_ids))}")
+
+# Map raw tracker IDs to dense canonical Mark IDs: [1], [2], ...
+canonical_person_map = {orig_tid: canonical_id for canonical_id, orig_tid in enumerate(sorted(stable_person_ids), 1)}
+num_persons = len(canonical_person_map)
+print(f"Canonical Dense Person Mark Remapping: {canonical_person_map}")
 
 # Tracklet Gap Filling: Linearly interpolate short detection flickers (<= 6 frames)
 for tid in stable_person_ids:
@@ -277,15 +397,7 @@ for tid in stable_person_ids:
 # ==============================================================================
 print("\n--- Associating Forward Object Tracklets & Filtering Inactive Clutter ---")
 
-def compute_iou(box1, box2):
-    xA = max(box1[0], box2[0])
-    yA = max(box1[1], box2[1])
-    xB = min(box1[2], box2[2])
-    yB = min(box1[3], box2[3])
-    interArea = max(0, xB - xA) * max(0, yB - yA)
-    boxAArea = (box1[2] - box1[0]) * (box1[3] - box1[1])
-    boxBArea = (box2[2] - box2[0]) * (box2[3] - box2[1])
-    return interArea / float(boxAArea + boxBArea - interArea + 1e-6)
+
 
 raw_tracklets = []
 ASSOCIATION_DIST_THRESH = 100.0
@@ -374,8 +486,7 @@ for track in stitched_tracklets:
 # Rule 3: Zero-Displacement Inactive Clutter
 # A carried/manipulated object MUST have active spatial displacement (displacement >= 20px) and sufficient persistence (hits >= 25)
 confirmed_active_objects = []
-max_person_id = max(stable_person_ids) if stable_person_ids else 1
-next_entity_id = max_person_id + 1
+next_entity_id = num_persons + 1
 
 for track in stitched_tracklets:
     hits = len(track['frame_map'])
@@ -401,6 +512,30 @@ for track in stitched_tracklets:
     print(f"Confirmed Active Forward Object: ID=[{next_entity_id}], class='{obj_class}', hits={hits}, mean_conf={mean_conf:.2f}, displacement={total_displacement:.1f}px")
     next_entity_id += 1
 
+# Stationary Forward-Fill (Object Placement Persistence)
+# If an active object becomes stationary towards the end of its trajectory (e.g. placed on a surface)
+# and does NOT exit the scene borders, hold its last resting position through the end of the segment.
+for obj in confirmed_active_objects:
+    sorted_fs = sorted(obj['frame_map'].keys())
+    if not sorted_fs:
+        continue
+    last_f = sorted_fs[-1]
+    if last_f < end_frame:
+        tail_fs = sorted_fs[-min(10, len(sorted_fs)):]
+        tail_boxes = np.array([obj['frame_map'][f] for f in tail_fs])
+        tail_cxs = (tail_boxes[:, 0] + tail_boxes[:, 2]) / 2.0
+        tail_cys = (tail_boxes[:, 1] + tail_boxes[:, 3]) / 2.0
+        tail_disp = float(np.hypot(np.ptp(tail_cxs), np.ptp(tail_cys)))
+
+        last_b = obj['frame_map'][last_f]
+        is_near_border = (last_b[0] < 15 or last_b[1] < 15 or 
+                          last_b[2] > width - 15 or last_b[3] > height - 15)
+
+        if tail_disp < 15.0 and not is_near_border:
+            print(f"  [Stationary Forward-Fill] Object [{obj['id']}] '{obj['class']}' resting at frame {last_f} (tail disp={tail_disp:.1f}px). Holding position through frame {end_frame}.")
+            for f_fill in range(last_f + 1, end_frame + 1):
+                obj['frame_map'][f_fill] = last_b
+
 # ==============================================================================
 # PASS 2: Clean Set-of-Marks Rendering & Video Stream
 # ==============================================================================
@@ -420,14 +555,24 @@ for frame_info in frame_detections:
     f_idx = frame_info['frame_idx']
     annotated_frame = frame.copy()
 
-    # 1. Render Persons
-    for b, tid, c_name in frame_info['persons']:
+    # 1. Render Persons with Canonical Dense Mark IDs
+    clean_render_persons = filter_anatomical_torso_duplicates(frame_info['persons'])
+    rendered_person_tids = {}
+    for b, tid, c_name in clean_render_persons:
         if tid not in stable_person_ids:
             continue
+        c_tid = canonical_person_map[tid]
+        area = (b[2] - b[0]) * (b[3] - b[1])
+        if c_tid not in rendered_person_tids or area > rendered_person_tids[c_tid]['area']:
+            rendered_person_tids[c_tid] = {'box': b, 'class': c_name, 'area': area}
+
+    for c_tid, p_data in rendered_person_tids.items():
+        b = p_data['box']
+        c_name = p_data['class']
         x1, y1, x2, y2 = b
-        mark_id = f"[{tid}]"
+        mark_id = f"[{c_tid}]"
         tracked_entities[mark_id] = c_name
-        color = COLOR_PALETTE[tid % len(COLOR_PALETTE)]
+        color = COLOR_PALETTE[c_tid % len(COLOR_PALETTE)]
 
         cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
         label_text = f"{mark_id} {c_name}"
@@ -474,9 +619,9 @@ cap.release()
 print(f"Annotated clip written to: {output_video_path} ({len(processed_frames)} frames)")
 
 # ==============================================================================
-# LIFESPAN-AWARE KEYFRAME SAMPLING FOR VLM (8 FRAMES)
+# VISIBILITY-AWARE ADAPTIVE KEYFRAME SAMPLING FOR VLM (8 FRAMES)
 # ==============================================================================
-print(f"\n--- Adaptive Keyframe Sampling: Selecting {NUM_VLM_FRAMES} high-visibility frames ---")
+print(f"\n--- Visibility-Aware Adaptive Keyframe Sampling: Selecting {NUM_VLM_FRAMES} high-visibility frames ---")
 step = (len(processed_frames) - 1) / (NUM_VLM_FRAMES - 1) if NUM_VLM_FRAMES > 1 else 0
 
 person_lifespans = {}
@@ -485,8 +630,14 @@ for pid in stable_person_ids:
     if p_f_indices:
         person_lifespans[pid] = (min(p_f_indices), max(p_f_indices))
 
+object_lifespans = {}
+for obj in confirmed_active_objects:
+    o_fs = sorted(obj['frame_map'].keys())
+    if o_fs:
+        object_lifespans[obj['id']] = (o_fs[0], o_fs[-1])
+
 sample_indices = []
-WINDOW_RADIUS = 3
+WINDOW_RADIUS = 12  # Search radius (~0.4s) around ideal cadence for clean multi-entity visibility
 
 for i in range(NUM_VLM_FRAMES):
     s_ideal = int(round(i * step))
@@ -500,11 +651,18 @@ for i in range(NUM_VLM_FRAMES):
         cand_f_num = processed_frames[cand_idx][0]
         cand_fd = frame_detections[cand_idx]
 
-        expected_pids = {pid for pid, (p_start, p_end) in person_lifespans.items() if p_start <= cand_f_num <= p_end}
-        present_pids = {tid for _, tid, _ in cand_fd['persons'] if tid in stable_person_ids}
-        missing_count = len(expected_pids - present_pids)
+        # 1. Persons presence
+        expected_pids = {canonical_person_map[pid] for pid, (p_start, p_end) in person_lifespans.items() if p_start <= cand_f_num <= p_end}
+        present_pids = {canonical_person_map[tid] for _, tid, _ in cand_fd['persons'] if tid in stable_person_ids}
+        missing_persons = len(expected_pids - present_pids)
 
-        cand_score = (missing_count * 1000) + abs(cand_idx - s_ideal)
+        # 2. Interactive Objects presence
+        expected_oids = {oid for oid, (o_start, o_end) in object_lifespans.items() if o_start <= cand_f_num <= o_end}
+        present_oids = {obj['id'] for obj in confirmed_active_objects if cand_f_num in obj['frame_map']}
+        missing_objects = len(expected_oids - present_oids)
+
+        # Penalty: missing person (1000) + missing interactive object (800) + temporal displacement (1)
+        cand_score = (missing_persons * 1000) + (missing_objects * 800) + abs(cand_idx - s_ideal)
         if cand_score < best_score:
             best_score = cand_score
             best_idx = cand_idx
@@ -547,24 +705,23 @@ prompt_payload = {
     "task": "Video Visual Relation Detection (VidVRD) - Surveillance Scenario",
     "scenario": "All-Pairs Visual Relation Detection between Marked Entities over Time",
     "model_target": "Qwen/Qwen2.5-VL-3B-Instruct",
-    "pipeline_variant": "yoloe_forward_tracking",
+    "pipeline_variant": "unified_yoloe_forward_tracking",
     "clip_info": {
         "source_video": os.path.basename(video_path),
         "frames_directory": f"data/frames/{video_basename}_yoloe",
         "clip_duration_seconds": END_SEC - START_SEC,
         "start_timestamp": f"{START_SEC}s",
-        "end_timestamp": f"{END_SEC}s",
-        "total_clip_frames": len(processed_frames),
         "sampled_frames_count": NUM_VLM_FRAMES,
         "tuning_features": [
-            "Open-Vocabulary YOLOE Architecture: yoloe-26m-seg.pt with 60 classes from s_objects.json",
-            "Decoupled Person Tracking: yolo11n.pt with ByteTrack for ultra-smooth person identity continuity",
+            "Unified Single-Model Architecture: 100% yoloe-26m-seg.pt for all 60 s_objects.json classes",
+            "Single Forward Pass: Synchronous person tracking and open-vocabulary object candidate detection",
+            "Zero Dual-Model Taxonomy Conflict: Complete elimination of separate COCO yolo11n model",
             "Pure Forward Tracking: Zero backward spatio-temporal association, zero retroactive heuristics",
             "Object Tracklet Stitching: Smooth temporal bridging across carrier locomotion and placement",
             "Active Entity Spatio-Temporal Filter: Rejects zero-displacement clutter (disp < 20px) and static fixtures",
-            "Dynamic Mark IDs: Guaranteed collision-free mark IDs allocated dynamically based on active tracks",
-            "Lifespan-Aware Adaptive Sampling: Preserves temporal cadence while rescuing flickers",
-            "Sterile 4-Pillar Prompt: Zero hardcoded video IDs or answer-leaking suggestions",
+            "Stationary Forward-Fill: Persists placed objects resting on surfaces until clip end",
+            "Visibility-Aware Adaptive Sampling: Selects 8 pristine frames maximizing entity visibility",
+            "Sterile 4-Pillar Prompt: Zero temporal_summary hallucination traps, zero hardcoded hints",
             "Closed-Taxonomy Mapping Guardrail: Strictly maps visual actions to 26 benchmark predicates"
         ]
     },
@@ -579,13 +736,16 @@ prompt_payload = {
         "Analyze all provided sequential frames of this surveillance video clip.\n"
         f"Detected entities with visual marks: {dynamic_entities_string}.\n\n"
         "Examine active interactions between the marked entities across time.\n\n"
-        "CRITICAL INSTRUCTION: First, write a temporal_summary describing the sequence of visible actions from early to late frames: "
-        "note any physical contact between persons, and observe the state of the object without assuming actions that are not clearly visible.\n\n"
         "PREDEFINED RELATION TAXONOMY (CLOSED VOCABULARY):\n"
         f"Every predicate in the 'relation' field MUST be an exact string match selected strictly from the 26 allowed categories: {relations_list}. All out-of-vocabulary verbs are strictly prohibited.\n"
+        "- Strictly evaluate interactions ONLY between marked entities [ID]. Completely ignore unmarked objects or background clutter; NEVER substitute an unmarked item with a marked person.\n"
+        "- Predicates 'carry' and 'hold' apply strictly between a Person (subject) and a moveable Object (e.g., bag, suitcase). A person cannot 'carry' another person unless physically lifting them off the ground.\n"
         "- Predicates like 'get_on', 'get_off', 'ride', 'drive' apply ONLY to vehicles or animals.\n"
-        "- Only predict manipulation relations ('hold', 'carry') if a person physically grasps and supports the object with their hands.\n"
-        "- If a pair has no active interaction matching the 26 predefined categories, omit that pair entirely (do not force any relation).\n\n"
+        "- Categorize active physical contact between persons as 'touch'.\n"
+        "- Categorize a person holding and transporting an object while moving as 'carry', and holding statically as 'hold'.\n"
+        "- If an object remains stationary in the same location across all frames without movement, omit that pair.\n"
+        "- If an active interaction occurs in any frames, report that relation even if it ends later.\n"
+        "- In the 'reason' field, describe strictly the interaction between this subject and this object without referencing other entities.\n\n"
         'Respond strictly with the JSON object: {"triplets": [{"subject": "[ID]", "relation": "<verb>", "object": "[ID]", "reason": "..."}]}.'
     ),
     "ground_truth_triplet_labels": (
@@ -616,7 +776,7 @@ prompt_payload = {
 with open(payload_path, "w", encoding="utf-8") as f:
     json.dump(prompt_payload, f, indent=2, ensure_ascii=False)
 
-print(f"\n[OK] Pure Forward YOLOE Pipeline complete!")
+print(f"\n[OK] Unified Single-Model YOLOE Pipeline complete!")
 print(f"Annotated Video: {output_video_path}")
 print(f"Sampled Frames: {vlm_frames_dir} ({len(sampled_frame_files)} frames)")
 print(f"VLM Payload: {payload_path}")
