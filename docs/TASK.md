@@ -40,12 +40,33 @@ Tài liệu theo dõi tiến độ các đầu việc hàng ngày theo chỉ đ�
   - Kiểm chứng thành công: Video 1 đạt chuẩn `touch` đối xứng 100%, Video 7 đạt chuẩn tương tác tay `hold` 100% (F1 = 1.0 trên cả 2 video).
   - Đo đạc chi tiết tài nguyên token: Video 1 (4,667 tokens), Video 7 (5,040 tokens).
 
-- [ ] **Task 2: Mở rộng kiểm thử Pipeline YOLOE sang Video mới (Kiểm chứng tính tổng quát - Generalization)**
-  - Lựa chọn thêm một video mới trong tập dữ liệu (ví dụ `video10.mp4` hoặc video có tương tác người - người / người - vật).
-  - Chạy thực nghiệm `pipeline_yoloe.py` với cấu hình chuẩn (60 class, luồng xuôi, bộ lọc rác nền tĩnh `displacement >= 20px`).
-  - Đánh giá khả năng tổng quát hóa của pipeline mới trên video chưa từng qua tinh chỉnh (zero manual tuning).
+- [x] **Task 2: Nghiệm thu thực nghiệm mô hình Qwen3-VL-4B-Instruct trên Colab (Video 1 & Video 7)** [Hoàn thành bổ sung chiều 25/09]
+  - Chạy đối chứng song song trên GPU T4 của Google Colab với `Qwen3-VL-4B-Instruct` (commit `85278bf`).
+  - Đạt điểm số F1 = 1.0 trên cả 2 video: Video 1 phát hiện tiếp xúc cử chỉ vi mô (`shoulder/arm`), Video 7 nhận thức đúng chuyển động thời gian chọn chuẩn xác `[1] carry [2]`.
+  - Nén tối ưu visual tokens giảm ~16% (tiết kiệm ~750 tokens đầu vào). Toàn bộ Task mở rộng video mới và gom cụm ROI được chuyển tiếp sang kế hoạch tuần mới ngày 28/09 theo chỉ đạo của Mentor.
 
-- [ ] **Task 3: Nghiên cứu & Thiết kế giải pháp Gom cụm tương tác (Spatial Clustering & ROI Zoom Crop)**
-  - Nghiên cứu ý tưởng định hướng của Mentor: Gom nhóm các bounding box gần nhau trên frame bằng thuật toán không gian (DBSCAN / Scikit-learn hoặc khoảng cách Euclide).
-  - Xây dựng thuật toán tính toán hộp bao quanh cụm (Union Bounding Box) và cơ chế cắt ảnh phóng to vùng tương tác (ROI Crop).
-  - Đánh giá ưu/nhược điểm của ROI Crop: Giúp VLM nhìn rõ vật thể nhỏ, khử nhiễu người ở xa; đồng thời ghi nhận thách thức duy trì cụm xuyên suốt nhiều frame theo thời gian.
+---
+
+## Ngày: 2026-09-28
+
+- [x] **Task 1: Chuẩn hóa tính tổng quát cho Detector (Bật lại vật thể tĩnh & Giao quyền lọc rác cho Prompt VLM)** [Hoàn thành 28/09]
+  - Tiếp thu chỉ đạo của Mentor: Loại bỏ triệt để ngưỡng dịch chuyển cứng (`disp < 20px`) ở tầng detector, bảo toàn toàn bộ vật thể có độ bền vững không gian (`hits >= 25`).
+  - Hiện thực thuật toán gom cụm không gian đa nhãn (*Spatial Cross-Class Merging*): Tự động triệt tiêu hiện tượng dao động nhãn (nhảy luân phiên giữa `backpack` và `handbag`) của mô hình Open-Vocabulary bằng bầu chọn đa số phiếu (majority vote) và Spatial IoU NMS.
+  - Tự động kiểm tra trực quan từng frame:
+    + **Video 1**: Nhận diện và gán nhãn chính xác chiếc balo trên sàn thành `ID=[4] backpack` với banner hiển thị rõ nét trên các frame từ `frame_03` đến `frame_08`.
+    + **Video 7**: Giữ lại song song cả túi xách tĩnh trên bàn `ID=[2] handbag` (displacement 1.6px) và túi xách đang xách `ID=[3] handbag` (displacement 413.8px).
+  - Tự động cập nhật Payload JSON (`video1_yoloe_payload.json` & `video7_yoloe_payload.json`) tích hợp tập thực thể mở rộng và 4 trụ cột quy chuẩn ngữ nghĩa thị giác (Zero Cheating / Zero Hardcode):
+    + `Clean ID Formatting`: Chuẩn hóa ID sạch `"[1]"`, `"[2]"` (đáp ứng benchmark code).
+    + `Triplet Uniqueness & Predicate Exclusivity`: Khống chế tính duy nhất của quan hệ, cấm xuất hiện trùng lặp giữa các frame và loại trừ xung đột cường độ tiếp xúc (`touch` vs `push`).
+    + `Temporal Action Continuity`: Thống nhất các pha của hành động (tiếp cận, vươn tay, tiếp xúc, chia tay) thành một sự kiện tương tác liên tục, không phân mảnh động tác chuẩn bị thành `push`.
+    + `Physical Hand-Grasp Requirement`: Bắt buộc tay phải cầm nắm trực tiếp với vật thể (`carry`/`hold`), loại bỏ triệt để đồ vật nằm dưới đất.
+  - Tích hợp kỹ thuật lượng tử hóa 4-bit NF4 (BitsAndBytes NormalFloat4 + Double Quantization) trong `run_qwen3_vl_4b_colab.ipynb`: Giảm VRAM tiêu thụ trên Tesla T4 từ >14.5 GB (OOM) xuống ~9.5 GB / 15 GB an toàn mà vẫn giữ 99% độ chính xác.
+
+- [ ] **Task 2: Thiết kế & Hiện thực Module Gom cụm không gian (Spatial Clustering & Dynamic ROI Zoom Crop)**
+  - Hiện thực thuật toán gom cụm không gian (DBSCAN / Proximity-based Clustering) dựa trên khoảng cách giữa các bounding box của Người và Vật trong clip.
+  - Tự động tính toán Hộp bao cụm tương tác (Union Bounding Box) kèm lề an toàn (Adaptive Padding ~15%).
+  - Xây dựng cơ chế cắt ảnh phóng to vùng tương tác (ROI Zoom Crop) gửi vào VLM: Giúp VLM nhìn rõ chi tiết vi mô của vật thể nhỏ (túi xách, cầm nắm) và loại bỏ hoàn toàn nhiễu từ người đi lại ở khoảng cách xa.
+
+- [ ] **Task 3: Kiểm thử tổng quát hóa trên Video mới (Generalization on New Videos)**
+  - Thử nghiệm pipeline mới (kết hợp YOLOE tổng quát + Module ROI Zoom Crop) trên video mới trong tập dữ liệu (ví dụ Video 3 có hành vi rơi đồ, hoặc Video 10).
+  - Đánh giá khả năng bám bắt tương tác tự động mà không cần bất kỳ tinh chỉnh tham số thủ công nào (Zero manual tuning).

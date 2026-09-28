@@ -482,17 +482,48 @@ for track in stitched_tracklets:
                     interp_box = ((1.0 - alpha) * ba + alpha * bb).astype(int)
                     track['frame_map'][missing_f] = interp_box
 
-# Filter Inactive Clutter vs Interactive Forward Objects
-# Rule 3: Zero-Displacement Inactive Clutter
-# A carried/manipulated object MUST have active spatial displacement (displacement >= 20px) and sufficient persistence (hits >= 25)
+# ==============================================================================
+# SPATIAL CROSS-CLASS MERGING & PERSISTENT SCENE OBJECT RETENTION
+# In compliance with Mentor's directive: Zero hardcoded displacement suppression at detector level.
+# All persistent objects (dynamic or stationary) are marked; VLM prompt filters inactive clutter.
+# ==============================================================================
+persistent_tracklets = [tr for tr in stitched_tracklets if len(tr['frame_map']) >= 25]
+
+# Merge overlapping tracklets at the same physical location (resolves detector class oscillations, e.g., backpack vs handbag)
+merged_objects = []
+for tr in persistent_tracklets:
+    matched = None
+    for mo in merged_objects:
+        common_f = set(tr['frame_map'].keys()) & set(mo['frame_map'].keys())
+        if len(common_f) >= 8:
+            ious = [compute_iou(tr['frame_map'][f], mo['frame_map'][f]) for f in common_f]
+            if np.median(ious) > 0.35:
+                matched = mo
+                break
+        else:
+            b1_arr = np.array(list(tr['frame_map'].values()))
+            b2_arr = np.array(list(mo['frame_map'].values()))
+            c1 = (np.mean(b1_arr[:, 0] + b1_arr[:, 2]) / 2.0, np.mean(b1_arr[:, 1] + b1_arr[:, 3]) / 2.0)
+            c2 = (np.mean(b2_arr[:, 0] + b2_arr[:, 2]) / 2.0, np.mean(b2_arr[:, 1] + b2_arr[:, 3]) / 2.0)
+            if np.hypot(c1[0] - c2[0], c1[1] - c2[1]) < 35.0:
+                matched = mo
+                break
+
+    if matched is not None:
+        matched['frame_map'].update(tr['frame_map'])
+        matched['confs'].extend(tr['confs'])
+        matched['class_votes'][tr['class']] = matched['class_votes'].get(tr['class'], 0) + len(tr['confs'])
+        matched['class'] = max(matched['class_votes'].items(), key=lambda kv: kv[1])[0]
+        matched['last_frame'] = max(matched['last_frame'], tr['last_frame'])
+    else:
+        tr['class_votes'] = {tr['class']: len(tr['confs'])}
+        merged_objects.append(tr)
+
 confirmed_active_objects = []
 next_entity_id = num_persons + 1
 
-for track in stitched_tracklets:
+for track in merged_objects:
     hits = len(track['frame_map'])
-    if hits < 25:
-        continue  # omit transient fragments and flickers
-
     boxes_arr = np.array(list(track['frame_map'].values()))
     cxs = (boxes_arr[:, 0] + boxes_arr[:, 2]) / 2.0
     cys = (boxes_arr[:, 1] + boxes_arr[:, 3]) / 2.0
@@ -500,16 +531,12 @@ for track in stitched_tracklets:
     mean_conf = float(np.mean(track['confs']))
     obj_class = track['class']
 
-    # Clutter rejection: an object that stays in the exact same spot is inactive clutter
-    if total_displacement < 20.0:
-        print(f"Skipped Inactive Background Clutter: '{obj_class}', hits={hits}, displacement={total_displacement:.1f}px (<20px threshold)")
-        continue
-
     track['id'] = next_entity_id
     track['mean_conf'] = mean_conf
     track['displacement'] = total_displacement
     confirmed_active_objects.append(track)
-    print(f"Confirmed Active Forward Object: ID=[{next_entity_id}], class='{obj_class}', hits={hits}, mean_conf={mean_conf:.2f}, displacement={total_displacement:.1f}px")
+    status_str = "Dynamic Moving" if total_displacement >= 20.0 else "Stationary Resting"
+    print(f"Confirmed Scene Object: ID=[{next_entity_id}], class='{obj_class}', hits={hits}, mean_conf={mean_conf:.2f}, displacement={total_displacement:.1f}px ({status_str})")
     next_entity_id += 1
 
 # Stationary Forward-Fill (Object Placement Persistence)
@@ -739,13 +766,17 @@ prompt_payload = {
         "PREDEFINED RELATION TAXONOMY (CLOSED VOCABULARY):\n"
         f"Every predicate in the 'relation' field MUST be an exact string match selected strictly from the 26 allowed categories: {relations_list}. All out-of-vocabulary verbs are strictly prohibited.\n"
         "- Strictly evaluate interactions ONLY between marked entities [ID]. Completely ignore unmarked objects or background clutter; NEVER substitute an unmarked item with a marked person.\n"
-        "- Predicates 'carry' and 'hold' apply strictly between a Person (subject) and a moveable Object (e.g., bag, suitcase). A person cannot 'carry' another person unless physically lifting them off the ground.\n"
+        "- Clean ID Formatting: In the 'subject' and 'object' fields, output strictly the clean mark ID string (e.g. '[1]', '[2]') without appending class names or descriptive words.\n"
+        "- Triplet Uniqueness & Predicate Exclusivity: Report each unique relation between a subject and an object AT MOST ONCE for the entire clip. Between the same subject and object, interaction predicates are strictly mutually exclusive: output ONLY the single most comprehensive predicate (e.g., casual contact during walking, greeting, or parting is categorized strictly as 'touch', never 'push'). Do NOT output duplicate or conflicting triplets for different frames.\n"
+        "- Temporal Action Continuity: Sequential phases of an interaction across time (such as approaching, extending an arm, making contact, and parting) constitute ONE unified interaction event. Do NOT fragment preparatory reaching motions into a separate 'push' relation.\n"
+        "- Interpersonal Actions: Categorize casual physical contact between persons (such as placing a hand on a shoulder, touching an arm or body, or tapping) strictly as 'touch'. Reserve 'push' and 'pull' strictly for visible forceful shoving where an entity is visibly propelled, knocked off balance, or dragged.\n"
+        - Predicates 'carry' and 'hold' apply strictly between a Person (subject) and a moveable Object. A person cannot 'carry' another person unless physically lifting them off the ground.\n"
+        "- PHYSICAL HAND-GRASP REQUIREMENT: 'carry' and 'hold' strictly require direct physical hand contact (grasping, gripping, or lifting the object). If an object is resting on the floor or surface and a person's hands are not physically grasping it (e.g., hands are raised, swinging, or interacting with another person), the person is NOT carrying or holding it. Merely walking past, stepping near, or standing over an object on the ground is NOT an interaction; omit that pair.\n"
         "- Predicates like 'get_on', 'get_off', 'ride', 'drive' apply ONLY to vehicles or animals.\n"
-        "- Categorize active physical contact between persons as 'touch'.\n"
-        "- Categorize a person holding and transporting an object while moving as 'carry', and holding statically as 'hold'.\n"
+        "- Categorize a person holding and transporting an object with their hands while moving as 'carry', and holding statically as 'hold'.\n"
         "- If an object remains stationary in the same location across all frames without movement, omit that pair.\n"
         "- If an active interaction occurs in any frames, report that relation even if it ends later.\n"
-        "- In the 'reason' field, describe strictly the interaction between this subject and this object without referencing other entities.\n\n"
+        "- In the 'reason' field, describe strictly the visible physical contact between this subject and this object without referencing other entities.\n\n"
         'Respond strictly with the JSON object: {"triplets": [{"subject": "[ID]", "relation": "<verb>", "object": "[ID]", "reason": "..."}]}.'
     ),
     "ground_truth_triplet_labels": (
