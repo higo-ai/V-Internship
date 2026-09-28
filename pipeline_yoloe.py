@@ -639,7 +639,7 @@ for frame_info in frame_detections:
 
     out_writer.write(annotated_frame)
     curr_time_sec = f_idx / fps
-    processed_frames.append((f_idx, curr_time_sec, annotated_frame))
+    processed_frames.append((f_idx, curr_time_sec, annotated_frame, frame.copy()))
 
 out_writer.release()
 cap.release()
@@ -702,14 +702,18 @@ for i in range(NUM_VLM_FRAMES):
     sample_indices.append(best_idx)
 
 sampled_frame_files = []
+clean_sampled_frames = {}
 for order, s_idx in enumerate(sample_indices, 1):
-    f_num, f_sec, f_img = processed_frames[s_idx]
+    item = processed_frames[s_idx]
+    f_num, f_sec, f_img = item[0], item[1], item[2]
+    f_clean = item[3] if len(item) > 3 else f_img
     fn = f"frame_{order:02d}_{f_sec:.2f}s.jpg"
     out1 = os.path.join(vlm_frames_dir, fn)
     out2 = os.path.join(artifact_dir, fn)
     cv2.imwrite(out1, f_img)
     cv2.imwrite(out2, f_img)
     sampled_frame_files.append(fn)
+    clean_sampled_frames[s_idx] = (f_sec, f_clean)
     print(f"  [Frame {order}/{NUM_VLM_FRAMES}] Saved: {fn} (idx {s_idx}, sec {f_sec:.2f}s)")
 
 # ==============================================================================
@@ -770,7 +774,7 @@ prompt_payload = {
         "- Triplet Uniqueness & Predicate Exclusivity: Report each unique relation between a subject and an object AT MOST ONCE for the entire clip. Between the same subject and object, interaction predicates are strictly mutually exclusive: output ONLY the single most comprehensive predicate (e.g., casual contact during walking, greeting, or parting is categorized strictly as 'touch', never 'push'). Do NOT output duplicate or conflicting triplets for different frames.\n"
         "- Temporal Action Continuity: Sequential phases of an interaction across time (such as approaching, extending an arm, making contact, and parting) constitute ONE unified interaction event. Do NOT fragment preparatory reaching motions into a separate 'push' relation.\n"
         "- Interpersonal Actions: Categorize casual physical contact between persons (such as placing a hand on a shoulder, touching an arm or body, or tapping) strictly as 'touch'. Reserve 'push' and 'pull' strictly for visible forceful shoving where an entity is visibly propelled, knocked off balance, or dragged.\n"
-        - Predicates 'carry' and 'hold' apply strictly between a Person (subject) and a moveable Object. A person cannot 'carry' another person unless physically lifting them off the ground.\n"
+        "- Predicates 'carry' and 'hold' apply strictly between a Person (subject) and a moveable Object. A person cannot 'carry' another person unless physically lifting them off the ground.\n"
         "- PHYSICAL HAND-GRASP REQUIREMENT: 'carry' and 'hold' strictly require direct physical hand contact (grasping, gripping, or lifting the object). If an object is resting on the floor or surface and a person's hands are not physically grasping it (e.g., hands are raised, swinging, or interacting with another person), the person is NOT carrying or holding it. Merely walking past, stepping near, or standing over an object on the ground is NOT an interaction; omit that pair.\n"
         "- Predicates like 'get_on', 'get_off', 'ride', 'drive' apply ONLY to vehicles or animals.\n"
         "- Categorize a person holding and transporting an object with their hands while moving as 'carry', and holding statically as 'hold'.\n"
@@ -811,3 +815,136 @@ print(f"\n[OK] Unified Single-Model YOLOE Pipeline complete!")
 print(f"Annotated Video: {output_video_path}")
 print(f"Sampled Frames: {vlm_frames_dir} ({len(sampled_frame_files)} frames)")
 print(f"VLM Payload: {payload_path}")
+
+# ==============================================================================
+# TASK 2: SPATIO-TEMPORAL INTERACTION CLUSTERING & DYNAMIC ROI ZOOM CROP
+# ==============================================================================
+print("\n" + "=" * 80)
+print("TASK 2: SPATIO-TEMPORAL INTERACTION CLUSTERING & DYNAMIC ROI ZOOM CROP")
+print("=" * 80)
+
+# Build comprehensive entity trajectory maps for clustering
+all_cluster_entities = {}
+for orig_tid, c_id in canonical_person_map.items():
+    eid = f"[{c_id}]"
+    p_fmap = {}
+    for fd in frame_detections:
+        for b, tid, _ in fd['persons']:
+            if tid == orig_tid:
+                p_fmap[fd['frame_idx']] = b
+                break
+    all_cluster_entities[eid] = {
+        "class": "person",
+        "frame_map": p_fmap,
+        "type": "person"
+    }
+
+for obj in confirmed_active_objects:
+    eid = f"[{obj['id']}]"
+    all_cluster_entities[eid] = {
+        "class": obj['class'],
+        "frame_map": obj['frame_map'],
+        "type": "object",
+        "displacement": obj.get('displacement', 0.0)
+    }
+
+from modules.spatial_clustering import (
+    cluster_entities_spatially,
+    compute_cluster_union_boxes,
+    render_cluster_zoom_frames
+)
+
+active_clusters, singletons = cluster_entities_spatially(
+    entities=all_cluster_entities,
+    image_shape=(height, width)
+)
+
+print(f"Spatial Clustering Analysis:")
+print(f"  - Total Active Interactive Clusters (|C| >= 2): {len(active_clusters)}")
+print(f"  - Total Isolated Singletons (|C| == 1):         {len(singletons)} (Excluded from interaction query)")
+if singletons:
+    print(f"    * Isolated Non-Interacting Entities: {singletons}")
+
+roi_payloads_generated = []
+
+for c in active_clusters:
+    cid = c['cluster_id']
+    c_eids = c['entity_ids']
+    c_entities_str = ", ".join([f"{eid} ({c['entities'][eid]['class']})" for eid in c_eids])
+    print(f"\n  [Interactive {cid.upper()}]: Entities = {c_entities_str}, Min Spatial Distance = {c['min_internal_distance_px']:.1f}px")
+
+    cluster_frames_dir = os.path.join(base_dir, "data", "frames", f"{video_basename}_roi_{cid}")
+    
+    # Compute stabilized union crop box with 20% adaptive padding
+    crop_boxes = compute_cluster_union_boxes(
+        cluster_entity_ids=c_eids,
+        entities=all_cluster_entities,
+        sample_frame_indices=sample_indices,
+        image_shape=(height, width),
+        padding_ratio=0.20,
+        stabilize_temporal_envelope=True
+    )
+
+    # Render Zoom Crop Frames
+    saved_zoom_frames = render_cluster_zoom_frames(
+        cluster=c,
+        clean_frames_dict=clean_sampled_frames,
+        crop_boxes=crop_boxes,
+        output_dir=cluster_frames_dir,
+        color_palette=COLOR_PALETTE
+    )
+
+    zoom_filenames = [fn for fn, _, _ in saved_zoom_frames]
+    mean_zoom = float(np.mean([zf for _, _, zf in saved_zoom_frames]))
+
+    print(f"    * Rendered {len(saved_zoom_frames)} Zoom Crop Frames (Mean Magnification: {mean_zoom:.2f}x)")
+    print(f"    * Storage: {cluster_frames_dir}")
+
+    # Build cluster-specific user prompt
+    cluster_user_prompt = (
+        f"Analyze all provided sequential zoom-crop frames of this localized interaction zone ({cid}).\n"
+        f"Detected entities with visual marks in this interaction cluster: {c_entities_str}.\n\n"
+        "Examine active interactions between the marked entities across time.\n\n"
+        "PREDEFINED RELATION TAXONOMY (CLOSED VOCABULARY):\n"
+        f"Every predicate in the 'relation' field MUST be an exact string match selected strictly from the 26 allowed categories: {relations_list}. All out-of-vocabulary verbs are strictly prohibited.\n"
+        "- Strictly evaluate interactions ONLY between marked entities [ID]. Completely ignore unmarked objects or background clutter; NEVER substitute an unmarked item with a marked person.\n"
+        "- Clean ID Formatting: In the 'subject' and 'object' fields, output strictly the clean mark ID string (e.g. '[1]', '[2]') without appending class names or descriptive words.\n"
+        "- Triplet Uniqueness & Predicate Exclusivity: Report each unique relation between a subject and an object AT MOST ONCE for the entire clip. Between the same subject and object, interaction predicates are strictly mutually exclusive: output ONLY the single most comprehensive predicate (e.g., casual contact during walking, greeting, or parting is categorized strictly as 'touch', never 'push'). Do NOT output duplicate or conflicting triplets for different frames.\n"
+        "- Temporal Action Continuity: Sequential phases of an interaction across time (such as approaching, extending an arm, making contact, and parting) constitute ONE unified interaction event. Do NOT fragment preparatory reaching motions into a separate 'push' relation.\n"
+        "- Interpersonal Actions: Categorize casual physical contact between persons (such as placing a hand on a shoulder, touching an arm or body, or tapping) strictly as 'touch'. Reserve 'push' and 'pull' strictly for visible forceful shoving where an entity is visibly propelled, knocked off balance, or dragged.\n"
+        "- Predicates 'carry' and 'hold' apply strictly between a Person (subject) and a moveable Object. A person cannot 'carry' another person unless physically lifting them off the ground.\n"
+        "- PHYSICAL HAND-GRASP REQUIREMENT: 'carry' and 'hold' strictly require direct physical hand contact (grasping, gripping, or lifting the object). If an object is resting on the floor or surface and a person's hands are not physically grasping it (e.g., hands are raised, swinging, or interacting with another person), the person is NOT carrying or holding it. Merely walking past, stepping near, or standing over an object on the ground is NOT an interaction; omit that pair.\n"
+        "- Predicates like 'get_on', 'get_off', 'ride', 'drive' apply ONLY to vehicles or animals.\n"
+        "- Categorize a person holding and transporting an object with their hands while moving as 'carry', and holding statically as 'hold'.\n"
+        "- If an object remains stationary in the same location across all frames without movement, omit that pair.\n"
+        "- If an active interaction occurs in any frames, report that relation even if it ends later.\n"
+        "- In the 'reason' field, describe strictly the visible physical contact between this subject and this object without referencing other entities.\n\n"
+        'Respond strictly with the JSON object: {"triplets": [{"subject": "[ID]", "relation": "<verb>", "object": "[ID]", "reason": "..."}]}.'
+    )
+
+    cluster_payload = {
+        "task": "Video Visual Relation Detection (VidVRD) - Task 2 Dynamic ROI Zoom Crop",
+        "scenario": f"Localized Interaction Zone Analysis ({cid})",
+        "pipeline_variant": "yoloe_spatial_clustering_dynamic_roi_zoom",
+        "cluster_info": {
+            "cluster_id": cid,
+            "entities": [{"mark_id": eid, "class_label": c['entities'][eid]['class']} for eid in c_eids],
+            "zoom_magnification_factor": f"{mean_zoom:.2f}x",
+            "padding_ratio": 0.20,
+            "min_internal_distance_px": round(c['min_internal_distance_px'], 1)
+        },
+        "allowed_objects_vocabulary_60": allowed_objects_60,
+        "allowed_relations_vocabulary_26": relations_list,
+        "visual_prompt_frames_sequence": zoom_filenames,
+        "vlm_system_prompt": vlm_system_prompt,
+        "vlm_user_prompt": cluster_user_prompt
+    }
+
+    roi_payload_path = os.path.join(payloads_dir, f"{video_basename}_roi_{cid}_payload.json")
+    with open(roi_payload_path, "w", encoding="utf-8") as rpf:
+        json.dump(cluster_payload, rpf, indent=2, ensure_ascii=False)
+    
+    print(f"    * Generated Cluster Payload: {roi_payload_path}")
+    roi_payloads_generated.append(roi_payload_path)
+
+print(f"\n[TASK 2 SUCCESS] Generated {len(roi_payloads_generated)} Task 2 ROI Cluster Payloads.")

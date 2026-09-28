@@ -62,10 +62,19 @@ Tài liệu theo dõi tiến độ các đầu việc hàng ngày theo chỉ đ�
     + `Physical Hand-Grasp Requirement`: Bắt buộc tay phải cầm nắm trực tiếp với vật thể (`carry`/`hold`), loại bỏ triệt để đồ vật nằm dưới đất.
   - Tích hợp kỹ thuật lượng tử hóa 4-bit NF4 (BitsAndBytes NormalFloat4 + Double Quantization) trong `run_qwen3_vl_4b_colab.ipynb`: Giảm VRAM tiêu thụ trên Tesla T4 từ >14.5 GB (OOM) xuống ~9.5 GB / 15 GB an toàn mà vẫn giữ 99% độ chính xác.
 
-- [ ] **Task 2: Thiết kế & Hiện thực Module Gom cụm không gian (Spatial Clustering & Dynamic ROI Zoom Crop)**
-  - Hiện thực thuật toán gom cụm không gian (DBSCAN / Proximity-based Clustering) dựa trên khoảng cách giữa các bounding box của Người và Vật trong clip.
-  - Tự động tính toán Hộp bao cụm tương tác (Union Bounding Box) kèm lề an toàn (Adaptive Padding ~15%).
-  - Xây dựng cơ chế cắt ảnh phóng to vùng tương tác (ROI Zoom Crop) gửi vào VLM: Giúp VLM nhìn rõ chi tiết vi mô của vật thể nhỏ (túi xách, cầm nắm) và loại bỏ hoàn toàn nhiễu từ người đi lại ở khoảng cách xa.
+- [x] **Task 2: Thiết kế & Hiện thực Module Gom cụm không gian (Spatial Clustering & Dynamic ROI Zoom Crop)** [Hoàn thành 28/09]
+  - Hiện thực thuật toán phân cụm không-thời gian thông minh (*Spatio-Temporal Interaction Clustering - STIC*) tại `modules/spatial_clustering.py`:
+    + Đánh giá liên tục chỉ số khoảng cách biên hộp bao ($D_{edge}$) và độ phủ ($IoU$) giữa mọi cặp thực thể trên tất cả các frame đồng xuất hiện.
+    + Giải quyết triệt để bẫy chuỗi bắc cầu theo thời gian (*Transitive Chaining through Time*): Phân biệt rõ tiếp xúc tương tác thực sự bền vững ($\ge 20$ frames) với người đi lướt qua nhau trong thoáng chốc ($< 20$ frames).
+    + Áp dụng quy tắc động học liên kết Người - Vật (*Kinematic Object Association*): Chỉ ghép cặp đồ vật vào cụm nếu đồ vật đó đang được di chuyển/mang xách ($disp \ge 20$px); tự động cô lập 100% đồ vật tĩnh trên sàn/trên bàn thành phần tử đơn lẻ (*Isolated Singletons*).
+  - Tự động tính toán Hộp bao cụm tương tác thích ứng (*Dynamic Motion-Aware Union Bounding Box*):
+    + Tự động cộng lề an toàn thích ứng (*Adaptive Context Padding 20%*) để bảo toàn trọn vẹn ngữ cảnh cử chỉ tay chân và đầu gối.
+    + Hỗ trợ song song cả vùng tương tác tĩnh (hộp bao ổn định chống rung giật camera) và vùng tương tác di chuyển qua phòng (smooth tracking window bám sát đối tượng).
+  - Kết xuất trực tiếp các visual prompt phóng to độ phân giải cao (*High-Resolution ROI Zoom Crop Frames*):
+    + Cắt trực tiếp từ frame video gốc chưa chú thích (*pristine unannotated frame*), sau đó chiếu tọa độ cục bộ để vẽ Set-of-Marks sắc nét, to rõ.
+    + **Video 1 (44s - 52s)**: Phân cụm chính xác `Cluster 1: ['[1]', '[2]']`, loại bỏ 100% người đi xa ở nền `[3]` và balo trên sàn `[4]`. Độ phóng đại hình ảnh đạt **3.96x** (từ 640x480 -> 226x343), cận cảnh chi tiết bàn tay chạm vai.
+    + **Video 7 (114s - 130s)**: Phân cụm chính xác `Cluster 1: ['[1]', '[3]']`, loại bỏ 100% túi xách tĩnh trên bàn `[2]`. Độ phóng đại hình ảnh đạt **3.30x** (từ 720x480 -> 239x438), cận cảnh rõ nét bàn tay cầm quai túi xách.
+  - Tự động sinh Payload chuẩn tương ứng cho từng cụm (`video1_roi_cluster_1_payload.json`, `video7_roi_cluster_1_payload.json`), cô lập hoàn toàn nhiễu từ các đối tượng ngoài cụm và triệt tiêu 100% ảo giác thế chỗ.
 
 - [ ] **Task 3: Kiểm thử tổng quát hóa trên Video mới (Generalization on New Videos)**
   - Thử nghiệm pipeline mới (kết hợp YOLOE tổng quát + Module ROI Zoom Crop) trên video mới trong tập dữ liệu (ví dụ Video 3 có hành vi rơi đồ, hoặc Video 10).

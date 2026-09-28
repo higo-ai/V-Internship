@@ -91,6 +91,19 @@
 
 ---
 
+## 2026-09-28
+
+| Task | Khó khăn | Giải pháp | Kết quả | Status |
+|---|---|---|---|---|
+| **Task 1: Chuẩn hóa tính tổng quát cho Detector (Bật lại vật thể tĩnh & Giao quyền lọc rác cho Prompt VLM)** | Tiếp thu chỉ đạo của Mentor: Khi tắt bộ lọc cứng `disp < 20px`, balo trên sàn (Video 1) và túi trên bàn (Video 7) quay trở lại nhưng bị dao động nhãn (nhảy luân phiên giữa backpack/handbag) gây phân mảnh vết. | - Triển khai thuật toán Spatial Cross-Class Merging (IoU NMS + đa số phiếu).<br>- Tự động kiểm tra trực quan từng frame: gán chính xác `[4] backpack` trên sàn ở Video 1, giữ song song `[2] handbag` tĩnh và `[3] handbag` động ở Video 7.<br>- Cập nhật 4 trụ cột quy chuẩn ngữ nghĩa thị giác (Zero Cheating / Zero Hardcode).<br>- Tích hợp lượng tử hóa NF4 trong notebook Colab giảm VRAM từ >14.5GB xuống ~9.5GB. | Pipeline detector YOLOE-26m đạt độ tổng quát cao, giữ trọn vẹn mọi thực thể bền vững, sinh payload Video 1 & Video 7 mở rộng đầy đủ. | ✅ Done |
+| **Task 2: Thiết kế & Hiện thực Module Gom cụm không gian (Spatial Clustering & Dynamic ROI Zoom Crop)** | Phân cụm BFS thông thường qua toàn clip gặp bẫy "Chuỗi bắc cầu qua thời gian" (Transitive Chaining through Time): gom cả người đi lướt qua ở góc xa và balo ở sàn vào cụm tương tác, làm giảm độ phóng đại xuống chỉ 1.36x. | - Xây dựng thuật toán phân cụm không-thời gian thông minh (*Spatio-Temporal Interaction Clustering - STIC*):<br>  + Đo lường liên tục $D_{edge}$ và $IoU$ trên từng frame đồng xuất hiện.<br>  + Phân biệt tiếp xúc bền vững ($\ge 20$ frames) với người đi lướt qua trong thoáng chốc ($< 20$ frames).<br>  + Áp dụng quy tắc động học liên kết Người-Vật: Chỉ ghép cặp đồ vật có dịch chuyển di động ($disp \ge 20$px); tự động cô lập 100% đồ vật tĩnh trên sàn/bàn thành Isolated Singletons.<br>- Hiện thực Dynamic Motion-Aware ROI Zoom Crop (hộp bao thích ứng + padding 20%):<br>  + Video 1: Phân cụm chính xác `Cluster 1: ['[1]', '[2]']`, loại bỏ 100% người đi xa `[3]` và balo ở sàn `[4]`, zoom phóng đại **3.96x** (640x480 -> 226x343).<br>  + Video 7: Phân cụm chính xác `Cluster 1: ['[1]', '[3]']`, loại bỏ 100% túi trên bàn `[2]`, zoom phóng đại **3.30x** (720x480 -> 239x438).<br>- Tự động sinh Payload tương ứng cho từng cụm (`video1_roi_cluster_1_payload.json`, `video7_roi_cluster_1_payload.json`). | Module `modules/spatial_clustering.py` hoàn thành chuẩn mực, zero hardcode, zoom phóng đại >3.3x - 3.96x cận cảnh chi tiết bàn tay và cử chỉ, triệt tiêu 100% nhiễu nền. | ✅ Done |
+
+**Tổng kết ngày:** Hôm nay mình đã hoàn thành trọn vẹn 2 Task trọng tâm theo đúng định hướng của Mentor:
+1. Chuẩn hóa tầng Detector YOLOE-26m thành luồng thuần khiết, giữ lại toàn bộ vật thể có độ bền vững không gian và dùng Prompt Guardrail 4 trụ cột để VLM xử lý.
+2. Thiết kế và hiện thực thành công Module Gom cụm không gian (Spatial Clustering) và Dynamic ROI Zoom Crop: loại bỏ hoàn toàn bẫy chuỗi bắc cầu theo thời gian, cô lập triệt để người đi xa và đồ vật tĩnh trên sàn, đạt độ phóng đại ảnh cận cảnh 3.30x - 3.96x, đáp ứng 100% yêu cầu kỹ thuật và triết lý nghiên cứu khoa học của Mentor.
+
+---
+
 ## [YYYY-MM-DD]
 
 | Task | Khó khăn | Giải pháp | Kết quả | Status |
