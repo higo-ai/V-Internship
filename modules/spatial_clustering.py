@@ -236,10 +236,22 @@ def compute_cluster_union_boxes(
 
     for f_idx in sample_frame_indices:
         f_boxes = []
-        for eid in cluster_entity_ids:
-            fm = entities[eid]["frame_map"]
-            if f_idx in fm:
-                f_boxes.append(fm[f_idx])
+        visible_eids = [eid for eid in cluster_entity_ids if f_idx in entities[eid]["frame_map"]]
+        human_visible = [eid for eid in visible_eids if entities[eid].get("type") == "person"]
+
+        if human_visible:
+            # Human entities actively forming the interaction core in this frame
+            core_boxes = [entities[eid]["frame_map"][f_idx] for eid in human_visible]
+            f_boxes.extend(core_boxes)
+            # Include associated scene objects only if they are within physical reach (<= 80px) in this frame
+            for eid in visible_eids:
+                if eid not in human_visible:
+                    o_box = entities[eid]["frame_map"][f_idx]
+                    min_dist_to_human = min(compute_box_edge_distance(o_box, h_box) for h_box in core_boxes)
+                    if min_dist_to_human <= 80.0:
+                        f_boxes.append(o_box)
+        else:
+            f_boxes = [entities[eid]["frame_map"][f_idx] for eid in visible_eids]
 
         if f_boxes:
             f_boxes_arr = np.array(f_boxes)
@@ -256,7 +268,7 @@ def compute_cluster_union_boxes(
     centers = [((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0) for b in raw_boxes_per_frame.values()]
     max_disp_x = max(c[0] for c in centers) - min(c[0] for c in centers)
     max_disp_y = max(c[1] for c in centers) - min(c[1] for c in centers)
-    is_wide_travel = (max_disp_x > 0.35 * w_img) or (max_disp_y > 0.35 * h_img)
+    is_wide_travel = (max_disp_x > 0.20 * w_img) or (max_disp_y > 0.20 * h_img)
 
     if stabilize_temporal_envelope and not is_wide_travel:
         # Stabilized static envelope across all frames for localized interactions
@@ -351,8 +363,14 @@ def render_cluster_zoom_frames(
         for eid in cluster_entity_ids:
             fm = entities[eid]["frame_map"]
             if f_idx not in fm:
-                continue
-            orig_b = fm[f_idx]
+                sorted_k = sorted(fm.keys())
+                if sorted_k and sorted_k[0] <= f_idx <= sorted_k[-1]:
+                    nearest_k = min(sorted_k, key=lambda k: abs(k - f_idx))
+                    orig_b = fm[nearest_k]
+                else:
+                    continue
+            else:
+                orig_b = fm[f_idx]
             # Transform to local coordinates
             lx1 = max(0, orig_b[0] - cx1)
             ly1 = max(0, orig_b[1] - cy1)

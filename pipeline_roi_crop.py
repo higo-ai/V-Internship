@@ -23,7 +23,15 @@ import torch
 from ultralytics import YOLO
 
 # Import Task 2 Spatial Clustering Module
+STATIC_FIXTURE_CLASSES = {
+    "table", "bench", "chair", "refrigerator", "sofa", "bed",
+    "toilet", "sink", "microwave", "oven", "screen", "stool",
+    "stop_sign", "traffic_light", "electric_fan", "faucet"
+}
+
 from modules.spatial_clustering import (
+    compute_box_edge_distance,
+    compute_box_iou,
     cluster_entities_spatially,
     compute_cluster_union_boxes,
     render_cluster_zoom_frames
@@ -37,7 +45,7 @@ parser.add_argument("--video", type=str, default="data/videos/video1.mp4", help=
 parser.add_argument("--start_sec", type=float, default=44.0, help="Start time in seconds for golden segment")
 parser.add_argument("--end_sec", type=float, default=52.0, help="End time in seconds for golden segment")
 parser.add_argument("--num_frames", type=int, default=8, help="Number of clean VLM frames to sample")
-parser.add_argument("--conf", type=float, default=0.40, help="Confidence threshold for interactive object detection")
+parser.add_argument("--conf", type=float, default=0.20, help="Confidence threshold for interactive object detection")
 parser.add_argument("--iou", type=float, default=0.35, help="IoU threshold for ByteTrack person tracking")
 parser.add_argument("--stride", type=int, default=1, help="Frame step stride for object detection")
 parser.add_argument("--device", type=str, default="auto", help="Compute device: 'auto', 'cuda', or 'cpu'")
@@ -132,7 +140,6 @@ for f_idx in range(start_frame, end_frame + 1):
         break
     raw_clean_frames[f_idx] = (f_idx / fps, frame)
 
-    # Single forward pass for both human tracking and object detection (avoids Ultralytics classes mutation bug)
     track_results = model.track(
         source=frame,
         persist=True,
@@ -153,40 +160,42 @@ for f_idx in range(start_frame, end_frame + 1):
 
         for b, c_idx, c_val, tid in zip(d_boxes, d_clses, d_confs, d_ids):
             c_name = allowed_objects_60[c_idx]
+            bw = b[2] - b[0]
+            bh = b[3] - b[1]
+            area = bw * bh
             if c_name == "person":
-                if tid is not None:
-                    frame_persons.append((b, tid, "person"))
+                # Filter out distant doorway background noise specks (area < 800 or height < 50)
+                if tid is not None and area >= 800 and bh >= 50:
+                    frame_persons.append((b, tid, "person", area))
             else:
-                if c_val >= CONF_THRESH:
+                if c_name not in STATIC_FIXTURE_CLASSES and c_val >= CONF_THRESH and area >= 200:
                     frame_objects.append((b, c_name, c_val))
 
-    # Object Association
+    # Spatial Object Association with Open-Vocabulary Class Frequency Fusion
     for b_det, c_name, c_val in frame_objects:
         matched_tr = None
-        best_iou = 0.20
+        best_dist = float("inf")
+        c_det = ((b_det[0] + b_det[2]) / 2.0, (b_det[1] + b_det[3]) / 2.0)
+
         for tr in active_object_tracklets:
-            if tr["class"] == c_name and (f_idx - tr["last_frame"]) <= 12:
+            if (f_idx - tr["last_frame"]) <= 25:
                 last_b = tr["frame_map"][tr["last_frame"]]
-                # compute IoU
-                x1 = max(b_det[0], last_b[0])
-                y1 = max(b_det[1], last_b[1])
-                x2 = min(b_det[2], last_b[2])
-                y2 = min(b_det[3], last_b[3])
-                inter = max(0, x2 - x1) * max(0, y2 - y1)
-                a1 = max(0, b_det[2] - b_det[0]) * max(0, b_det[3] - b_det[1])
-                a2 = max(0, last_b[2] - last_b[0]) * max(0, last_b[3] - last_b[1])
-                u = a1 + a2 - inter
-                iou = (inter / u) if u > 0 else 0.0
-                if iou > best_iou:
-                    best_iou = iou
-                    matched_tr = tr
+                c_last = ((last_b[0] + last_b[2]) / 2.0, (last_b[1] + last_b[3]) / 2.0)
+                center_dist = math.hypot(c_det[0] - c_last[0], c_det[1] - c_last[1])
+                iou = compute_box_iou(b_det, last_b)
+                if iou >= 0.20 or center_dist <= 40.0:
+                    if center_dist < best_dist:
+                        best_dist = center_dist
+                        matched_tr = tr
+
         if matched_tr is not None:
             matched_tr["frame_map"][f_idx] = b_det
             matched_tr["confs"].append(c_val)
+            matched_tr["class_votes"][c_name] = matched_tr["class_votes"].get(c_name, 0) + 1
             matched_tr["last_frame"] = f_idx
         else:
             active_object_tracklets.append({
-                "class": c_name,
+                "class_votes": {c_name: 1},
                 "frame_map": {f_idx: b_det},
                 "confs": [c_val],
                 "first_frame": f_idx,
@@ -202,88 +211,92 @@ for f_idx in range(start_frame, end_frame + 1):
 # ------------------------------------------------------------------------------
 # 4. STABLE PERSON IDENTIFIERS & TRACKLET REFINEMENT
 # ------------------------------------------------------------------------------
-all_tids = {}
+# Prioritize foreground actors by total pixel mass (count * mean_area)
+person_tid_stats = {}
 for fd in frame_detections:
-    for b, tid, c in fd["persons"]:
-        all_tids[tid] = all_tids.get(tid, 0) + 1
+    for b, tid, c, area in fd["persons"]:
+        if tid not in person_tid_stats:
+            person_tid_stats[tid] = {"count": 0, "total_area": 0, "frames": {}}
+        person_tid_stats[tid]["count"] += 1
+        person_tid_stats[tid]["total_area"] += area
+        person_tid_stats[tid]["frames"][fd["frame_idx"]] = b
 
-stable_person_ids = [tid for tid, count in all_tids.items() if count >= 10]
-stable_person_ids.sort(key=lambda x: all_tids[x], reverse=True)
-num_persons = min(3, len(stable_person_ids))
-canonical_person_map = {orig_tid: i + 1 for i, orig_tid in enumerate(sorted(stable_person_ids[:num_persons]))}
+stable_persons = [
+    tid for tid, stats in person_tid_stats.items()
+    if stats["count"] >= 15 and (stats["total_area"] / stats["count"]) >= 2000
+]
+stable_persons.sort(key=lambda tid: person_tid_stats[tid]["total_area"], reverse=True)
+num_persons = min(3, len(stable_persons))
+canonical_persons = sorted(stable_persons[:num_persons])
+canonical_person_map = {orig_tid: i + 1 for i, orig_tid in enumerate(canonical_persons)}
 
 person_entities = {}
-for p_idx, (orig_tid, c_tid) in enumerate(canonical_person_map.items()):
+for orig_tid, c_tid in canonical_person_map.items():
     p_id = f"[{c_tid}]"
-    p_fmap = {}
-    for fd in frame_detections:
-        for b, tid, c in fd["persons"]:
-            if tid == orig_tid:
-                p_fmap[fd["frame_idx"]] = b
     person_entities[p_id] = {
         "class": "person",
-        "frame_map": p_fmap,
+        "frame_map": person_tid_stats[orig_tid]["frames"],
         "type": "person"
     }
 
-# Object tracklet cross-class merging (merges class oscillations like backpack vs handbag at the same physical location)
-persistent_objects = [tr for tr in active_object_tracklets if len(tr["frame_map"]) >= 20]
+# Object tracklet cross-class merging & stationary occlusion gap interpolation
+persistent_raw_objects = [tr for tr in active_object_tracklets if len(tr["frame_map"]) >= 15]
+
 merged_objects = []
-for tr in persistent_objects:
+for tr in persistent_raw_objects:
     matched = None
     for mo in merged_objects:
-        common_f = set(tr["frame_map"].keys()) & set(mo["frame_map"].keys())
-        if len(common_f) >= 8:
-            ious = []
-            for f in common_f:
-                b1, b2 = tr["frame_map"][f], mo["frame_map"][f]
-                x1, y1 = max(b1[0], b2[0]), max(b1[1], b2[1])
-                x2, y2 = min(b1[2], b2[2]), min(b1[3], b2[3])
-                inter = max(0, x2 - x1) * max(0, y2 - y1)
-                u = (b1[2]-b1[0])*(b1[3]-b1[1]) + (b2[2]-b2[0])*(b2[3]-b2[1]) - inter
-                ious.append(inter/u if u > 0 else 0)
-            if np.median(ious) > 0.35:
-                matched = mo
-                break
-        else:
-            b1_arr = np.array(list(tr['frame_map'].values()))
-            b2_arr = np.array(list(mo['frame_map'].values()))
-            c1 = (np.mean(b1_arr[:, 0] + b1_arr[:, 2]) / 2.0, np.mean(b1_arr[:, 1] + b1_arr[:, 3]) / 2.0)
-            c2 = (np.mean(b2_arr[:, 0] + b2_arr[:, 2]) / 2.0, np.mean(b2_arr[:, 1] + b2_arr[:, 3]) / 2.0)
-            if np.hypot(c1[0] - c2[0], c1[1] - c2[1]) < 45.0:
-                matched = mo
-                break
-
+        b1_arr = np.array(list(tr['frame_map'].values()))
+        b2_arr = np.array(list(mo['frame_map'].values()))
+        c1 = (np.mean(b1_arr[:, 0] + b1_arr[:, 2]) / 2.0, np.mean(b1_arr[:, 1] + b1_arr[:, 3]) / 2.0)
+        c2 = (np.mean(b2_arr[:, 0] + b2_arr[:, 2]) / 2.0, np.mean(b2_arr[:, 1] + b2_arr[:, 3]) / 2.0)
+        if math.hypot(c1[0] - c2[0], c1[1] - c2[1]) <= 40.0:
+            matched = mo
+            break
     if matched is not None:
         matched["frame_map"].update(tr["frame_map"])
         matched["confs"].extend(tr["confs"])
-        if "class_votes" not in matched:
-            matched["class_votes"] = {matched["class"]: len(matched["confs"])}
-        matched["class_votes"][tr["class"]] = matched["class_votes"].get(tr["class"], 0) + len(tr["confs"])
-        matched["class"] = max(matched["class_votes"].items(), key=lambda kv: kv[1])[0]
+        for cn, count in tr["class_votes"].items():
+            matched["class_votes"][cn] = matched["class_votes"].get(cn, 0) + count
     else:
-        tr["class_votes"] = {tr["class"]: len(tr["confs"])}
         merged_objects.append(tr)
 
-# Stationary Forward-Fill: if an object rests on surface, hold its position through end of clip
+# Interpolate occlusion gaps and hold stationary position
 for mo in merged_objects:
     sorted_fs = sorted(mo["frame_map"].keys())
     if sorted_fs:
-        last_f = sorted_fs[-1]
-        last_b = mo["frame_map"][last_f]
-        for f_fill in range(last_f + 1, end_frame + 1):
-            mo["frame_map"][f_fill] = last_b
+        min_f, max_f = sorted_fs[0], sorted_fs[-1]
+        for f in range(min_f + 1, max_f):
+            if f not in mo["frame_map"]:
+                prev_f = max(k for k in sorted_fs if k < f)
+                next_f = min(k for k in sorted_fs if k > f)
+                alpha = (f - prev_f) / (next_f - prev_f)
+                b_prev = np.array(mo["frame_map"][prev_f], dtype=float)
+                b_next = np.array(mo["frame_map"][next_f], dtype=float)
+                b_interp = (1.0 - alpha) * b_prev + alpha * b_next
+                mo["frame_map"][f] = b_interp.astype(int)
+        
+        # Stationary forward-fill ONLY for resting scene objects (disp < 35px), preventing ghost boxes for carried items
+        boxes_arr = np.array(list(mo["frame_map"].values()))
+        cxs = (boxes_arr[:, 0] + boxes_arr[:, 2]) / 2.0
+        cys = (boxes_arr[:, 1] + boxes_arr[:, 3]) / 2.0
+        disp = float(math.hypot(np.ptp(cxs), np.ptp(cys)))
+        if disp < 35.0:
+            last_b = mo["frame_map"][max_f]
+            for f in range(max_f + 1, end_frame + 1):
+                mo["frame_map"][f] = last_b
 
 next_obj_id = num_persons + 1
 object_entities = {}
 for mo in merged_objects:
     o_id = f"[{next_obj_id}]"
+    final_class = max(mo["class_votes"].items(), key=lambda kv: kv[1])[0]
     boxes_arr = np.array(list(mo["frame_map"].values()))
     cxs = (boxes_arr[:, 0] + boxes_arr[:, 2]) / 2.0
     cys = (boxes_arr[:, 1] + boxes_arr[:, 3]) / 2.0
-    disp = float(np.hypot(np.ptp(cxs), np.ptp(cys)))
+    disp = float(math.hypot(np.ptp(cxs), np.ptp(cys)))
     object_entities[o_id] = {
-        "class": mo["class"],
+        "class": final_class,
         "frame_map": mo["frame_map"],
         "type": "object",
         "displacement": disp
@@ -321,12 +334,6 @@ for c in active_clusters:
     e_list = [f"{eid} ({c['entities'][eid]['class']})" for eid in c["entity_ids"]]
     print(f"  - {cid.upper()}: Entities = {e_list}, Min Pairwise Edge Distance = {c['min_internal_distance_px']:.1f}px")
 
-# ------------------------------------------------------------------------------
-# 6. SAMPLING 8 TEMPORAL FRAMES
-# ------------------------------------------------------------------------------
-ideal_frame_indices = [int(start_frame + i * (end_frame - start_frame) / (NUM_VLM_FRAMES - 1)) for i in range(NUM_VLM_FRAMES)]
-sample_frames_clean = {f_idx: raw_clean_frames[f_idx] for f_idx in ideal_frame_indices if f_idx in raw_clean_frames}
-
 # Read System Prompt
 prompt_txt_path = os.path.join(base_dir, "data", "prompt_system_general.txt")
 if os.path.exists(prompt_txt_path):
@@ -336,7 +343,7 @@ else:
     vlm_system_prompt = ""
 
 # ------------------------------------------------------------------------------
-# 7. MULTI-SCALE DYNAMIC ROI ZOOM CROP & PAYLOAD GENERATION PER CLUSTER
+# 6. MULTI-SCALE DYNAMIC ROI ZOOM CROP & PAYLOAD GENERATION PER CLUSTER
 # ------------------------------------------------------------------------------
 print("\n" + "=" * 80)
 print("TASK 2: DYNAMIC ROI ZOOM CROP RENDERING & PAYLOAD GENERATION")
@@ -349,22 +356,62 @@ for c in active_clusters:
     cluster_dir_name = f"{video_basename}_roi_{cid}"
     cluster_frames_dir = os.path.join(base_dir, "data", "frames", cluster_dir_name)
     
-    # Dynamic Co-Presence Interaction Lifespan: sample 8 frames strictly while interacting entities are co-present
-    # Ensures no single chopped person / truncated border artifact in the final frame
-    co_present_frames = [
-        f for f in sorted(list(set.union(*[set(c['entities'][eid]['frame_map'].keys()) for eid in c['entity_ids']])))
-        if sum(1 for eid in c['entity_ids'] if f in c['entities'][eid]['frame_map']) >= 2
-    ]
-    if len(co_present_frames) >= NUM_VLM_FRAMES:
-        c_step = (len(co_present_frames) - 1) / (NUM_VLM_FRAMES - 1)
-        c_sample_indices = [co_present_frames[int(round(i * c_step))] for i in range(NUM_VLM_FRAMES)]
+    # Spatio-Temporal Active Interaction Window:
+    # Samples 8 frames strictly while the interacting entities are actively engaged in physical contact/proximity
+    # and safely within the camera frame (eliminates border truncation artifacts and post-interaction separation)
+    eids = c['entity_ids']
+    human_eids = [eid for eid in eids if c['entities'][eid]['type'] == 'person']
+
+    active_contact_frames = []
+    if len(human_eids) >= 2:
+        fm1 = c['entities'][human_eids[0]]['frame_map']
+        fm2 = c['entities'][human_eids[1]]['frame_map']
+        common_f = sorted(list(set(fm1.keys()) & set(fm2.keys())))
+        if common_f:
+            max_h1 = max(fm1[f][3] - fm1[f][1] for f in common_f)
+            max_h2 = max(fm2[f][3] - fm2[f][1] for f in common_f)
+            min_h1 = int(0.55 * max_h1)
+            min_h2 = int(0.55 * max_h2)
+            for f in common_f:
+                b1, b2 = fm1[f], fm2[f]
+                dist = compute_box_edge_distance(b1, b2)
+                h1 = b1[3] - b1[1]
+                h2 = b2[3] - b2[1]
+                # Full 4-edge boundary safety: persons are not truncated off-screen
+                in_bounds = (
+                    b1[0] >= 15 and b1[2] <= orig_w - 20 and b1[1] >= 15 and b1[3] <= orig_h - 20 and h1 >= min_h1 and
+                    b2[0] >= 15 and b2[2] <= orig_w - 20 and b2[1] >= 15 and b2[3] <= orig_h - 20 and h2 >= min_h2
+                )
+                if dist <= 30.0 and in_bounds:
+                    active_contact_frames.append(f)
+    elif len(human_eids) == 1 and len(eids) >= 2:
+        h_id = human_eids[0]
+        o_ids = [eid for eid in eids if eid != h_id]
+        fm_h = c['entities'][h_id]['frame_map']
+        for o_id in o_ids:
+            fm_o = c['entities'][o_id]['frame_map']
+            for f in sorted(list(set(fm_h.keys()) & set(fm_o.keys()))):
+                b1, b2 = fm_h[f], fm_o[f]
+                dist = compute_box_edge_distance(b1, b2)
+                is_in_bounds = (b1[2] <= orig_w - 20) and (b1[0] >= 15) and (b1[3] <= orig_h - 20) and (b1[1] >= 15)
+                if dist <= 35.0 and is_in_bounds:
+                    active_contact_frames.append(f)
+        active_contact_frames = sorted(list(set(active_contact_frames)))
+
+    if len(active_contact_frames) >= NUM_VLM_FRAMES:
+        c_step = (len(active_contact_frames) - 1) / (NUM_VLM_FRAMES - 1)
+        c_sample_indices = [active_contact_frames[int(round(i * c_step))] for i in range(NUM_VLM_FRAMES)]
     else:
-        cluster_visible_frames = sorted(list(set.union(*[set(c['entities'][eid]['frame_map'].keys()) for eid in c['entity_ids']])))
-        if len(cluster_visible_frames) >= NUM_VLM_FRAMES:
-            c_step = (len(cluster_visible_frames) - 1) / (NUM_VLM_FRAMES - 1)
-            c_sample_indices = [cluster_visible_frames[int(round(i * c_step))] for i in range(NUM_VLM_FRAMES)]
+        co_present_frames = [
+            f for f in sorted(list(set.union(*[set(c['entities'][eid]['frame_map'].keys()) for eid in c['entity_ids']])))
+            if sum(1 for eid in c['entity_ids'] if f in c['entities'][eid]['frame_map']) >= 2
+        ]
+        if len(co_present_frames) >= NUM_VLM_FRAMES:
+            c_step = (len(co_present_frames) - 1) / (NUM_VLM_FRAMES - 1)
+            c_sample_indices = [co_present_frames[int(round(i * c_step))] for i in range(NUM_VLM_FRAMES)]
         else:
-            c_sample_indices = ideal_frame_indices
+            ideal_step = (end_frame - start_frame) / (NUM_VLM_FRAMES - 1)
+            c_sample_indices = [int(start_frame + i * ideal_step) for i in range(NUM_VLM_FRAMES)]
 
     c_sample_frames_clean = {f_idx: raw_clean_frames[f_idx] for f_idx in c_sample_indices if f_idx in raw_clean_frames}
 
@@ -390,7 +437,7 @@ for c in active_clusters:
     frame_filenames = [fn for fn, _, _ in saved_frames]
     mean_zoom = float(np.mean([zf for _, _, zf in saved_frames]))
 
-    print(f"\n✅ [{cid.upper()}] Rendered {len(saved_frames)} Zoom Crop Frames:")
+    print(f"\nSUCCESS: [{cid.upper()}] Rendered {len(saved_frames)} Zoom Crop Frames:")
     print(f"   - Storage: {cluster_frames_dir}")
     print(f"   - Mean Resolution Magnification (Zoom Factor): {mean_zoom:.2f}x")
     for fn, _, zf in saved_frames[:3]:
