@@ -132,41 +132,32 @@ for f_idx in range(start_frame, end_frame + 1):
         break
     raw_clean_frames[f_idx] = (f_idx / fps, frame)
 
+    # Single forward pass for both human tracking and object detection (avoids Ultralytics classes mutation bug)
     track_results = model.track(
         source=frame,
         persist=True,
         tracker=bytetrack_config,
-        conf=0.15,
+        conf=0.20,
         iou=IOU_THRESH,
-        classes=[allowed_objects_60.index("person")],
         verbose=False,
         device=DEVICE
     )
 
     frame_persons = []
-    if track_results and track_results[0].boxes and track_results[0].boxes.id is not None:
-        boxes_xyxy = track_results[0].boxes.xyxy.cpu().numpy().astype(int)
-        track_ids = track_results[0].boxes.id.cpu().numpy().astype(int)
-        for b, tid in zip(boxes_xyxy, track_ids):
-            frame_persons.append((b, tid, "person"))
-
-    # Object Detection
     frame_objects = []
-    if (f_idx - start_frame) % FRAME_STRIDE == 0:
-        det_results = model.predict(
-            source=frame,
-            conf=CONF_THRESH,
-            iou=0.45,
-            verbose=False,
-            device=DEVICE
-        )
-        if det_results and det_results[0].boxes:
-            d_boxes = det_results[0].boxes.xyxy.cpu().numpy().astype(int)
-            d_clses = det_results[0].boxes.cls.cpu().numpy().astype(int)
-            d_confs = det_results[0].boxes.conf.cpu().numpy().astype(float)
-            for b, c_idx, c_val in zip(d_boxes, d_clses, d_confs):
-                c_name = allowed_objects_60[c_idx]
-                if c_name != "person":
+    if track_results and track_results[0].boxes:
+        d_boxes = track_results[0].boxes.xyxy.cpu().numpy().astype(int)
+        d_clses = track_results[0].boxes.cls.cpu().numpy().astype(int)
+        d_confs = track_results[0].boxes.conf.cpu().numpy().astype(float)
+        d_ids = track_results[0].boxes.id.cpu().numpy().astype(int) if track_results[0].boxes.id is not None else [None] * len(d_boxes)
+
+        for b, c_idx, c_val, tid in zip(d_boxes, d_clses, d_confs, d_ids):
+            c_name = allowed_objects_60[c_idx]
+            if c_name == "person":
+                if tid is not None:
+                    frame_persons.append((b, tid, "person"))
+            else:
+                if c_val >= CONF_THRESH:
                     frame_objects.append((b, c_name, c_val))
 
     # Object Association
