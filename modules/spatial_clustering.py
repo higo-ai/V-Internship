@@ -240,11 +240,6 @@ def compute_cluster_union_boxes(
             fm = entities[eid]["frame_map"]
             if f_idx in fm:
                 f_boxes.append(fm[f_idx])
-            else:
-                # Find nearest visible frame box
-                if fm:
-                    nearest_f = min(fm.keys(), key=lambda f: abs(f - f_idx))
-                    f_boxes.append(fm[nearest_f])
 
         if f_boxes:
             f_boxes_arr = np.array(f_boxes)

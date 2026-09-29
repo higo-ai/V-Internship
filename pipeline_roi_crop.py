@@ -326,11 +326,21 @@ for c in active_clusters:
     cluster_dir_name = f"{video_basename}_roi_{cid}"
     cluster_frames_dir = os.path.join(base_dir, "data", "frames", cluster_dir_name)
     
+    # Dynamic Cluster Lifespan: sample 8 frames strictly during the active interaction window of this cluster
+    cluster_visible_frames = sorted(list(set.union(*[set(c['entities'][eid]['frame_map'].keys()) for eid in c['entity_ids']])))
+    if len(cluster_visible_frames) >= NUM_VLM_FRAMES:
+        c_step = (len(cluster_visible_frames) - 1) / (NUM_VLM_FRAMES - 1)
+        c_sample_indices = [cluster_visible_frames[int(round(i * c_step))] for i in range(NUM_VLM_FRAMES)]
+    else:
+        c_sample_indices = ideal_frame_indices
+
+    c_sample_frames_clean = {f_idx: raw_clean_frames[f_idx] for f_idx in c_sample_indices if f_idx in raw_clean_frames}
+
     # Compute stabilized union crop box
     crop_boxes = compute_cluster_union_boxes(
         cluster_entity_ids=c["entity_ids"],
         entities=all_entities,
-        sample_frame_indices=ideal_frame_indices,
+        sample_frame_indices=c_sample_indices,
         image_shape=(orig_h, orig_w),
         padding_ratio=cli_args.padding_ratio,
         stabilize_temporal_envelope=True
@@ -339,7 +349,7 @@ for c in active_clusters:
     # Render Zoom Crop Frames
     saved_frames = render_cluster_zoom_frames(
         cluster=c,
-        clean_frames_dict=sample_frames_clean,
+        clean_frames_dict=c_sample_frames_clean,
         crop_boxes=crop_boxes,
         output_dir=cluster_frames_dir,
         color_palette=COLOR_PALETTE
