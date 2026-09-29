@@ -104,6 +104,20 @@
 
 ---
 
+## 2026-09-29
+
+| Task | Khó khăn | Giải pháp | Kết quả | Status |
+|---|---|---|---|---|
+| **Đồng bộ hóa định danh toàn cục (Global Tracking IDs) & Khắc phục hiện tượng phân mảnh vết người (Tracker ID Flicker)** | - Tái đánh số ID cục bộ (`[1]`, `[2]`, ...) trong khung hình crop gây lệch pha dữ liệu với hệ thống giám sát toàn cảnh (Branch A).<br>- Ở Video 7 (góc máy CCTV trên cao), người đi đến gần cửa bị ByteTrack phân mảnh ID ở frame cuối (nhảy từ ID 1 sang ID 2).<br>- Nguy cơ gộp nhầm người đi ở hành lang phía xa ở Video 1 nếu ghép vết (stitch) người theo thời gian mà thiếu điều kiện ràng buộc không gian. | - Loại bỏ module re-indexing cục bộ, bảo toàn 100% Global Tracking IDs xuyên suốt từ phát hiện toàn cảnh đến Set-of-Marks crop zoom.<br>- Bổ sung kiểm tra liên tục không-thời gian lân cận (Nearest-Frame Spatio-Temporal Continuity: $dt \le 15$ frames, $D_{edge} \le 35$px hoặc $IoU \ge 0.30$) để ghép các đoạn phân mảnh của cùng một đối tượng.<br>- Áp dụng ngưỡng IoU không gian ($\ge 0.35$) cho các tracklet xuất hiện đồng thời để ngăn ngừa gộp nhầm các cá nhân khác nhau. | - Đảm bảo tính nhất quán dữ liệu giữa Branch A và Branch B.<br>- Video 7 duy trì ổn định thực thể người `[1]` xuyên suốt 8 frame lấy mẫu. Video 1 tách biệt rõ người tương tác với người đi ở hành lang xa. | 🔄 In Progress |
+| **Hoàn thiện logic phân định tương tác Người - Vật thể tĩnh & Lấy mẫu thời gian thích ứng** | - Góc nhìn 2D từ trên cao dễ gây hiểu nhầm quang học giữa người đi ngang qua và vật thể tĩnh trên tường/bàn ở Video 7 (túi treo tường vô tình nằm sát hộp bao người dù không có tương tác vật lý).<br>- Lấy mẫu khung hình cố định dễ rơi vào thời điểm một trong các thực thể đã đi khỏi khung hình hoặc bị cắt cụt một phần ở mép camera. | - Thiết lập tiêu chí tương tác dựa trên thời gian lưu trú (dwell ratio $\ge 25\%$) và loại trừ vùng đỉnh đầu (15% phía trên của người) đối với vật thể tĩnh, giúp phân biệt rõ giữa tương tác cầm nắm thực tế với việc đi lướt qua dưới vật treo tường.<br>- Thiết kế cơ chế lấy mẫu thời gian thích ứng (Adaptive Spatio-Temporal Sampling): cụm tương tác người - người ưu tiên lấy mẫu trong cửa sổ tiếp xúc thực tế (`active_contact_frames`); cụm người - vật lấy mẫu trải đều chu trình tương tác. | - Phân loại đúng túi treo tường ở Video 7 là vật thể đơn lẻ (Singleton), không vẽ hộp bao trong ảnh crop của cụm tương tác, giảm thiểu gây nhiễu cho mô hình thị giác.<br>- Khung hình crop ở Video 1 và Video 7 giữ được đầy đủ thực thể trong tầm nhìn mà không bị cắt cụt rìa ảnh. | 🔄 In Progress |
+
+**Tổng kết ngày:**
+- Tập trung chuẩn hóa tính nhất quán dữ liệu giữa luồng theo dõi toàn cảnh và luồng crop zoom Set-of-Marks thông qua việc bảo toàn ID toàn cục.
+- Cải thiện các thuật toán xử lý phân mảnh vết theo thời gian và lọc nhiễu không gian cho các vật thể tĩnh, khắc phục hiện tượng nhảy ID và gộp nhầm thực thể dựa trên các điều kiện hình học và động học tổng quát.
+- Các điều chỉnh đã giải quyết được các bất cập quan sát thấy trên 2 video thực nghiệm (Video 1 và Video 7). Tuy nhiên, pipeline vẫn đang trong giai đoạn kiểm nghiệm và cần được đánh giá đầu cuối cùng mô hình VLM cũng như thử nghiệm trên tập dữ liệu rộng hơn để khẳng định tính tổng quát lâu dài.
+
+---
+
 ## [YYYY-MM-DD]
 
 | Task | Khó khăn | Giải pháp | Kết quả | Status |

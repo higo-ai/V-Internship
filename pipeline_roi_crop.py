@@ -1,3 +1,4 @@
+import glob
 """
 Unified Forward Pipeline with Task 2: Spatial Clustering & Dynamic ROI Zoom Crop
 =================================================================================
@@ -178,12 +179,13 @@ for f_idx in range(start_frame, end_frame + 1):
         c_det = ((b_det[0] + b_det[2]) / 2.0, (b_det[1] + b_det[3]) / 2.0)
 
         for tr in active_object_tracklets:
-            if (f_idx - tr["last_frame"]) <= 25:
+            gap = f_idx - tr["last_frame"]
+            if gap <= 40:
                 last_b = tr["frame_map"][tr["last_frame"]]
                 c_last = ((last_b[0] + last_b[2]) / 2.0, (last_b[1] + last_b[3]) / 2.0)
                 center_dist = math.hypot(c_det[0] - c_last[0], c_det[1] - c_last[1])
                 iou = compute_box_iou(b_det, last_b)
-                if iou >= 0.20 or center_dist <= 40.0:
+                if iou >= 0.20 or center_dist <= 60.0 or (gap <= 10 and center_dist <= 90.0):
                     if center_dist < best_dist:
                         best_dist = center_dist
                         matched_tr = tr
@@ -221,41 +223,112 @@ for fd in frame_detections:
         person_tid_stats[tid]["total_area"] += area
         person_tid_stats[tid]["frames"][fd["frame_idx"]] = b
 
-stable_persons = [
-    tid for tid, stats in person_tid_stats.items()
-    if stats["count"] >= 15 and (stats["total_area"] / stats["count"]) >= 2000
+# Temporal Tracklet Stitching (TTS) for Persons across temporary tracking dropouts
+raw_person_tracklets = [
+    {"id": tid, "frames": stats["frames"], "total_area": stats["total_area"]}
+    for tid, stats in person_tid_stats.items()
+    if stats["count"] >= 20 and (stats["total_area"] / stats["count"]) >= 1500
 ]
-stable_persons.sort(key=lambda tid: person_tid_stats[tid]["total_area"], reverse=True)
-num_persons = min(3, len(stable_persons))
-canonical_persons = sorted(stable_persons[:num_persons])
-canonical_person_map = {orig_tid: i + 1 for i, orig_tid in enumerate(canonical_persons)}
+raw_person_tracklets.sort(key=lambda t: min(t["frames"].keys()))
 
+stitched_persons = []
+for tr in raw_person_tracklets:
+    tr_start = min(tr["frames"].keys())
+    tr_start_b = tr["frames"][tr_start]
+    c_start = ((tr_start_b[0] + tr_start_b[2]) / 2.0, (tr_start_b[1] + tr_start_b[3]) / 2.0)
+    matched_sp = None
+    for sp in stitched_persons:
+        # Check temporal and spatial continuity across dropouts, concurrent duplicates, or tracker ID flicker
+        common_f = set(tr["frames"].keys()) & set(sp["frames"].keys())
+        if common_f:
+            # Overlapping tracklets: only merge if spatial duplicate of the same body (mean IoU >= 0.35)
+            ious = [compute_box_iou(tr["frames"][f], sp["frames"][f]) for f in common_f]
+            if np.mean(ious) >= 0.35:
+                matched_sp = sp
+                break
+        else:
+            # Non-concurrent tracklets (sequential or interleaved tracker flicker):
+            # Find nearest frames in time between tr and sp
+            min_dt = float("inf")
+            best_pair = None
+            for f_a in tr["frames"]:
+                for f_b in sp["frames"]:
+                    dt = abs(f_a - f_b)
+                    if dt < min_dt:
+                        min_dt = dt
+                        best_pair = (tr["frames"][f_a], sp["frames"][f_b])
+                        if dt == 1:
+                            break
+                if min_dt == 1:
+                    break
+            
+            # Brief dropout or tracker alternating flicker: dt <= 15 frames (~0.5s)
+            if min_dt <= 15 and best_pair is not None:
+                b1, b2 = best_pair
+                dist = compute_box_edge_distance(b1, b2)
+                iou = compute_box_iou(b1, b2)
+                if dist <= 35.0 or iou >= 0.30:
+                    matched_sp = sp
+                    break
+    if matched_sp is not None:
+        matched_sp["frames"].update(tr["frames"])
+        matched_sp["total_area"] += tr["total_area"]
+        matched_sp["orig_tids"].append(tr["id"])
+    else:
+        stitched_persons.append({
+            "orig_tids": [tr["id"]],
+            "frames": dict(tr["frames"]),
+            "total_area": tr["total_area"]
+        })
+
+stitched_persons.sort(key=lambda p: p["total_area"], reverse=True)
+canonical_persons = stitched_persons[:3]  # keep top foreground actors
 person_entities = {}
-for orig_tid, c_tid in canonical_person_map.items():
-    p_id = f"[{c_tid}]"
+for i, cp in enumerate(canonical_persons):
+    p_id = f"[{i + 1}]"
     person_entities[p_id] = {
         "class": "person",
-        "frame_map": person_tid_stats[orig_tid]["frames"],
+        "frame_map": cp["frames"],
         "type": "person"
     }
+num_persons = len(person_entities)
 
 # Object tracklet cross-class merging & stationary occlusion gap interpolation
-persistent_raw_objects = [tr for tr in active_object_tracklets if len(tr["frame_map"]) >= 15]
+persistent_raw_objects = [tr for tr in active_object_tracklets if len(tr["frame_map"]) >= 25]
 
+# Sort by appearance frame and apply Temporal Tracklet Stitching (TTS) for objects
+persistent_raw_objects.sort(key=lambda tr: min(tr["frame_map"].keys()))
 merged_objects = []
 for tr in persistent_raw_objects:
+    t_start = min(tr["frame_map"].keys())
+    b_start = tr["frame_map"][t_start]
+    c_start = ((b_start[0] + b_start[2]) / 2.0, (b_start[1] + b_start[3]) / 2.0)
+    c_class = max(tr["class_votes"].items(), key=lambda kv: kv[1])[0]
+    
     matched = None
     for mo in merged_objects:
-        b1_arr = np.array(list(tr['frame_map'].values()))
-        b2_arr = np.array(list(mo['frame_map'].values()))
-        c1 = (np.mean(b1_arr[:, 0] + b1_arr[:, 2]) / 2.0, np.mean(b1_arr[:, 1] + b1_arr[:, 3]) / 2.0)
-        c2 = (np.mean(b2_arr[:, 0] + b2_arr[:, 2]) / 2.0, np.mean(b2_arr[:, 1] + b2_arr[:, 3]) / 2.0)
-        if math.hypot(c1[0] - c2[0], c1[1] - c2[1]) <= 40.0:
-            matched = mo
-            break
+        mo_end = max(mo["frame_map"].keys())
+        b_end = mo["frame_map"][mo_end]
+        c_end = ((b_end[0] + b_end[2]) / 2.0, (b_end[1] + b_end[3]) / 2.0)
+        mo_class = max(mo["class_votes"].items(), key=lambda kv: kv[1])[0]
+        
+        gap = t_start - mo_end
+        dist = math.hypot(c_start[0] - c_end[0], c_start[1] - c_end[1])
+        
+        # Merge if same/compatible class (e.g. handbag <-> backpack) and either:
+        # (a) Spatial overlap/stationary match (dist <= 45px)
+        # (b) Sequential human transport continuity (gap <= 50 frames and dist <= 130px)
+        is_bag_family = (c_class in ["backpack", "handbag"]) and (mo_class in ["backpack", "handbag"])
+        is_same_class = (c_class == mo_class) or is_bag_family
+        
+        if is_same_class:
+            if dist <= 45.0 or (-5 <= gap <= 50 and dist <= 160.0):
+                matched = mo
+                break
+                
     if matched is not None:
         matched["frame_map"].update(tr["frame_map"])
-        matched["confs"].extend(tr["confs"])
+        matched["confs"].extend(tr.get("confs", []))
         for cn, count in tr["class_votes"].items():
             matched["class_votes"][cn] = matched["class_votes"].get(cn, 0) + count
     else:
@@ -354,7 +427,19 @@ generated_payloads = []
 for c in active_clusters:
     cid = c["cluster_id"]
     cluster_dir_name = f"{video_basename}_roi_{cid}"
+    
+    # PRESERVE TRUE GLOBAL TRACKING IDs: [1], [2], [4]...
+    # Strictly maintain 1-to-1 data consistency with Branch A (Full Frame CCTV tracking)
+    # Zero re-indexing prevents central database desynchronization and cross-window ID drift!
+    cluster_orig_eids = sorted(list(c["entity_ids"]), key=lambda eid: (0 if c["entities"][eid]["type"] == "person" else 1, eid))
+    c["entity_ids"] = cluster_orig_eids
     cluster_frames_dir = os.path.join(base_dir, "data", "frames", cluster_dir_name)
+    os.makedirs(cluster_frames_dir, exist_ok=True)
+    for old_f in glob.glob(os.path.join(cluster_frames_dir, "*.jpg")):
+        try:
+            os.remove(old_f)
+        except OSError:
+            pass
     
     # Spatio-Temporal Active Interaction Window:
     # Samples 8 frames strictly while the interacting entities are actively engaged in physical contact/proximity
@@ -398,7 +483,11 @@ for c in active_clusters:
                     active_contact_frames.append(f)
         active_contact_frames = sorted(list(set(active_contact_frames)))
 
-    if len(active_contact_frames) >= NUM_VLM_FRAMES:
+    # Adaptive Spatio-Temporal Sampling Strategy per Cluster Type:
+    # 1. Multi-person interaction clusters: Sample strictly within active_contact_frames where all participants
+    #    are actively in contact and safely within camera boundaries (eliminates border truncation artifacts).
+    # 2. Human-to-Object clusters: Sample across the full co-present interaction arc (transport -> surface placement -> release).
+    if len(human_eids) >= 2 and len(active_contact_frames) >= NUM_VLM_FRAMES:
         c_step = (len(active_contact_frames) - 1) / (NUM_VLM_FRAMES - 1)
         c_sample_indices = [active_contact_frames[int(round(i * c_step))] for i in range(NUM_VLM_FRAMES)]
     else:
@@ -409,6 +498,9 @@ for c in active_clusters:
         if len(co_present_frames) >= NUM_VLM_FRAMES:
             c_step = (len(co_present_frames) - 1) / (NUM_VLM_FRAMES - 1)
             c_sample_indices = [co_present_frames[int(round(i * c_step))] for i in range(NUM_VLM_FRAMES)]
+        elif len(active_contact_frames) >= NUM_VLM_FRAMES:
+            c_step = (len(active_contact_frames) - 1) / (NUM_VLM_FRAMES - 1)
+            c_sample_indices = [active_contact_frames[int(round(i * c_step))] for i in range(NUM_VLM_FRAMES)]
         else:
             ideal_step = (end_frame - start_frame) / (NUM_VLM_FRAMES - 1)
             c_sample_indices = [int(start_frame + i * ideal_step) for i in range(NUM_VLM_FRAMES)]

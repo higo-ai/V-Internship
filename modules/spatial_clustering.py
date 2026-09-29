@@ -125,13 +125,38 @@ def evaluate_pairwise_interaction_affinity(
     # --------------------------------------------------------------------------
     # Case 2: Human-to-Object Interaction (carry, hold, touch, sit_on, inspect, etc.)
     # In strict accordance with Mentor's directive:
-    # A scene object (whether dynamic like a carried bag, or stationary like a parked car, chair,
-    # or resting backpack) participates in an interaction IF AND ONLY IF a human enters physical
-    # contact or close arm-reach proximity (min_dist <= contact_thresh_px).
-    # Stationary objects far away from all humans (min_dist > contact_thresh_px) naturally remain isolated singletons.
+    # 1. Dynamic / Carried Objects (displacement >= 35px):
+    #    - Object moves with the person (e.g. carried bag).
+    #    - Requires physical contact/proximity (min_dist <= contact_thresh_px) over >= 10 frames or IoU >= 0.02.
+    # 2. Stationary Scene Objects (displacement < 35px, e.g. floor backpack, parked car, bench):
+    #    - Physical interaction requires contact in the person's active manipulation zone
+    #      (excluding crown of head: y >= y_top + 0.15 * person_h) AND sustained presence
+    #      (dwell ratio >= 25% of co-present frames or >= 25 sustained contact frames).
+    #    - Distinguishes genuine interaction (approaching and stopping at a car/backpack)
+    #      from optical 2D background occlusions (walking past a wall item hanging near ceiling).
     # --------------------------------------------------------------------------
-    is_interactive = (min_dist <= contact_thresh_px) and (contact_frames >= 10 or max_iou >= 0.02)
-    return is_interactive, min_dist, contact_frames, max_iou
+    obj_disp = float(obj_entity.get("displacement", 0.0))
+    if obj_disp >= 35.0:
+        is_interactive = (min_dist <= contact_thresh_px) and (contact_frames >= 10 or max_iou >= 0.02)
+        return is_interactive, min_dist, contact_frames, max_iou
+    else:
+        manip_contact_frames = 0
+        manip_min_dist = float("inf")
+        for f in common_frames:
+            p_b = np.array(person_entity["frame_map"][f], dtype=float)
+            o_b = np.array(obj_entity["frame_map"][f], dtype=float)
+            # Body manipulation zone (excluding top 15% head crown)
+            head_h = 0.15 * (p_b[3] - p_b[1])
+            body_b = np.array([p_b[0], p_b[1] + head_h, p_b[2], p_b[3]])
+            d_manip = compute_box_edge_distance(body_b, o_b)
+            if d_manip < manip_min_dist:
+                manip_min_dist = d_manip
+            if d_manip <= contact_thresh_px:
+                manip_contact_frames += 1
+        
+        dwell_ratio = manip_contact_frames / max(1, len(common_frames))
+        is_interactive = (manip_min_dist <= contact_thresh_px) and (dwell_ratio >= 0.25 and manip_contact_frames >= 15)
+        return is_interactive, manip_min_dist, manip_contact_frames, max_iou
 
 def cluster_entities_spatially(
     entities: Dict[str, Dict[str, Any]],
