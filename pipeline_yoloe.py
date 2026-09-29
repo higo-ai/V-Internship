@@ -703,6 +703,7 @@ for i in range(NUM_VLM_FRAMES):
 
 sampled_frame_files = []
 clean_sampled_frames = {}
+sampled_frame_numbers = []
 for order, s_idx in enumerate(sample_indices, 1):
     item = processed_frames[s_idx]
     f_num, f_sec, f_img = item[0], item[1], item[2]
@@ -713,8 +714,9 @@ for order, s_idx in enumerate(sample_indices, 1):
     cv2.imwrite(out1, f_img)
     cv2.imwrite(out2, f_img)
     sampled_frame_files.append(fn)
-    clean_sampled_frames[s_idx] = (f_sec, f_clean)
-    print(f"  [Frame {order}/{NUM_VLM_FRAMES}] Saved: {fn} (idx {s_idx}, sec {f_sec:.2f}s)")
+    clean_sampled_frames[f_num] = (f_sec, f_clean)
+    sampled_frame_numbers.append(f_num)
+    print(f"  [Frame {order}/{NUM_VLM_FRAMES}] Saved: {fn} (idx {s_idx}, frame {f_num}, sec {f_sec:.2f}s)")
 
 # ==============================================================================
 # GENERATE STANDALONE YOLOE VLM PAYLOAD JSON
@@ -879,7 +881,7 @@ for c in active_clusters:
     crop_boxes = compute_cluster_union_boxes(
         cluster_entity_ids=c_eids,
         entities=all_cluster_entities,
-        sample_frame_indices=sample_indices,
+        sample_frame_indices=sampled_frame_numbers,
         image_shape=(height, width),
         padding_ratio=0.20,
         stabilize_temporal_envelope=True
