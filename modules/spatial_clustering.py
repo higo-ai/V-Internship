@@ -122,27 +122,14 @@ def evaluate_pairwise_interaction_affinity(
     obj_entity = entity_b if type_b == "object" else entity_a
     person_entity = entity_a if type_b == "object" else entity_b
 
-    # Kinematic check: an interactive object must be manipulated or co-moving with the person
-    # Check object displacement
-    obj_disp = obj_entity.get("displacement")
-    if obj_disp is None:
-        obj_boxes = np.array(list(obj_entity["frame_map"].values()))
-        cxs = (obj_boxes[:, 0] + obj_boxes[:, 2]) / 2.0
-        cys = (obj_boxes[:, 1] + obj_boxes[:, 3]) / 2.0
-        obj_disp = float(np.hypot(np.ptp(cxs), np.ptp(cys)))
-
-    # If the object is strictly stationary across the entire segment (disp < 20px, resting on floor/surface)
-    # and has zero upper-body/hand manipulation, it is stationary background clutter (singleton)
-    is_object_moving = (obj_disp >= 20.0)
-
-    # Check vertical relative position: objects on the floor (at the bottom of person box) vs carried at hand/torso level
-    # For a stationary object to be considered interacting (e.g. picking up), it must be lifted or held
-    if not is_object_moving:
-        # Stationary resting object (e.g. resting backpack on floor, stationary handbag on table)
-        # Never carried or moved: strictly an isolated singleton
-        return False, min_dist, contact_frames, max_iou
-
-    # For a moving object: must be in close contact or overlap with the carrying person
+    # --------------------------------------------------------------------------
+    # Case 2: Human-to-Object Interaction (carry, hold, touch, sit_on, inspect, etc.)
+    # In strict accordance with Mentor's directive:
+    # A scene object (whether dynamic like a carried bag, or stationary like a parked car, chair,
+    # or resting backpack) participates in an interaction IF AND ONLY IF a human enters physical
+    # contact or close arm-reach proximity (min_dist <= contact_thresh_px).
+    # Stationary objects far away from all humans (min_dist > contact_thresh_px) naturally remain isolated singletons.
+    # --------------------------------------------------------------------------
     is_interactive = (min_dist <= contact_thresh_px) and (contact_frames >= 10 or max_iou >= 0.02)
     return is_interactive, min_dist, contact_frames, max_iou
 
