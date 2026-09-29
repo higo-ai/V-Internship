@@ -226,8 +226,8 @@ for p_idx, (orig_tid, c_tid) in enumerate(canonical_person_map.items()):
         "type": "person"
     }
 
-# Object tracklet cross-class merging
-persistent_objects = [tr for tr in active_object_tracklets if len(tr["frame_map"]) >= 25]
+# Object tracklet cross-class merging (merges class oscillations like backpack vs handbag at the same physical location)
+persistent_objects = [tr for tr in active_object_tracklets if len(tr["frame_map"]) >= 20]
 merged_objects = []
 for tr in persistent_objects:
     matched = None
@@ -245,11 +245,34 @@ for tr in persistent_objects:
             if np.median(ious) > 0.35:
                 matched = mo
                 break
+        else:
+            b1_arr = np.array(list(tr['frame_map'].values()))
+            b2_arr = np.array(list(mo['frame_map'].values()))
+            c1 = (np.mean(b1_arr[:, 0] + b1_arr[:, 2]) / 2.0, np.mean(b1_arr[:, 1] + b1_arr[:, 3]) / 2.0)
+            c2 = (np.mean(b2_arr[:, 0] + b2_arr[:, 2]) / 2.0, np.mean(b2_arr[:, 1] + b2_arr[:, 3]) / 2.0)
+            if np.hypot(c1[0] - c2[0], c1[1] - c2[1]) < 45.0:
+                matched = mo
+                break
+
     if matched is not None:
         matched["frame_map"].update(tr["frame_map"])
         matched["confs"].extend(tr["confs"])
+        if "class_votes" not in matched:
+            matched["class_votes"] = {matched["class"]: len(matched["confs"])}
+        matched["class_votes"][tr["class"]] = matched["class_votes"].get(tr["class"], 0) + len(tr["confs"])
+        matched["class"] = max(matched["class_votes"].items(), key=lambda kv: kv[1])[0]
     else:
+        tr["class_votes"] = {tr["class"]: len(tr["confs"])}
         merged_objects.append(tr)
+
+# Stationary Forward-Fill: if an object rests on surface, hold its position through end of clip
+for mo in merged_objects:
+    sorted_fs = sorted(mo["frame_map"].keys())
+    if sorted_fs:
+        last_f = sorted_fs[-1]
+        last_b = mo["frame_map"][last_f]
+        for f_fill in range(last_f + 1, end_frame + 1):
+            mo["frame_map"][f_fill] = last_b
 
 next_obj_id = num_persons + 1
 object_entities = {}
@@ -326,13 +349,22 @@ for c in active_clusters:
     cluster_dir_name = f"{video_basename}_roi_{cid}"
     cluster_frames_dir = os.path.join(base_dir, "data", "frames", cluster_dir_name)
     
-    # Dynamic Cluster Lifespan: sample 8 frames strictly during the active interaction window of this cluster
-    cluster_visible_frames = sorted(list(set.union(*[set(c['entities'][eid]['frame_map'].keys()) for eid in c['entity_ids']])))
-    if len(cluster_visible_frames) >= NUM_VLM_FRAMES:
-        c_step = (len(cluster_visible_frames) - 1) / (NUM_VLM_FRAMES - 1)
-        c_sample_indices = [cluster_visible_frames[int(round(i * c_step))] for i in range(NUM_VLM_FRAMES)]
+    # Dynamic Co-Presence Interaction Lifespan: sample 8 frames strictly while interacting entities are co-present
+    # Ensures no single chopped person / truncated border artifact in the final frame
+    co_present_frames = [
+        f for f in sorted(list(set.union(*[set(c['entities'][eid]['frame_map'].keys()) for eid in c['entity_ids']])))
+        if sum(1 for eid in c['entity_ids'] if f in c['entities'][eid]['frame_map']) >= 2
+    ]
+    if len(co_present_frames) >= NUM_VLM_FRAMES:
+        c_step = (len(co_present_frames) - 1) / (NUM_VLM_FRAMES - 1)
+        c_sample_indices = [co_present_frames[int(round(i * c_step))] for i in range(NUM_VLM_FRAMES)]
     else:
-        c_sample_indices = ideal_frame_indices
+        cluster_visible_frames = sorted(list(set.union(*[set(c['entities'][eid]['frame_map'].keys()) for eid in c['entity_ids']])))
+        if len(cluster_visible_frames) >= NUM_VLM_FRAMES:
+            c_step = (len(cluster_visible_frames) - 1) / (NUM_VLM_FRAMES - 1)
+            c_sample_indices = [cluster_visible_frames[int(round(i * c_step))] for i in range(NUM_VLM_FRAMES)]
+        else:
+            c_sample_indices = ideal_frame_indices
 
     c_sample_frames_clean = {f_idx: raw_clean_frames[f_idx] for f_idx in c_sample_indices if f_idx in raw_clean_frames}
 
