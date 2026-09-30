@@ -312,15 +312,16 @@ def compute_cluster_union_boxes(
         crop_x2 = min(w_img, all_x2 + pad_x)
         crop_y2 = min(h_img, all_y2 + pad_y)
 
-        # Ensure reasonable minimum crop dimension (at least 200px)
-        if (crop_x2 - crop_x1) < 200 and w_img >= 200:
+        # Ensure reasonable minimum crop dimension (at least 320px for natural visual context)
+        min_dim = 320
+        if (crop_x2 - crop_x1) < min_dim and w_img >= min_dim:
             cx = (crop_x1 + crop_x2) // 2
-            crop_x1 = max(0, min(w_img - 200, cx - 100))
-            crop_x2 = crop_x1 + 200
-        if (crop_y2 - crop_y1) < 200 and h_img >= 200:
+            crop_x1 = max(0, min(w_img - min_dim, cx - min_dim // 2))
+            crop_x2 = crop_x1 + min_dim
+        if (crop_y2 - crop_y1) < min_dim and h_img >= min_dim:
             cy = (crop_y1 + crop_y2) // 2
-            crop_y1 = max(0, min(h_img - 200, cy - 100))
-            crop_y2 = crop_y1 + 200
+            crop_y1 = max(0, min(h_img - min_dim, cy - min_dim // 2))
+            crop_y2 = crop_y1 + min_dim
 
         return {f_idx: (crop_x1, crop_y1, crop_x2, crop_y2) for f_idx in sample_frame_indices}
     else:
@@ -329,23 +330,24 @@ def compute_cluster_union_boxes(
         for f_idx, (ux1, uy1, ux2, uy2) in raw_boxes_per_frame.items():
             bw = ux2 - ux1
             bh = uy2 - uy1
-            # Adaptive padding: 20% on all sides
-            px = max(int(bw * padding_ratio), 30)
-            py = max(int(bh * padding_ratio), 30)
+            # Adaptive padding: generous padding on all sides
+            px = max(int(bw * max(padding_ratio, 0.30)), 40)
+            py = max(int(bh * max(padding_ratio, 0.20)), 30)
             cx1 = max(0, ux1 - px)
             cy1 = max(0, uy1 - py)
             cx2 = min(w_img, ux2 + px)
             cy2 = min(h_img, uy2 + py)
             
-            # Enforce minimum size
-            if (cx2 - cx1) < 200 and w_img >= 200:
+            # Enforce minimum size for natural aspect ratio
+            min_dim = 320
+            if (cx2 - cx1) < min_dim and w_img >= min_dim:
                 cx = (cx1 + cx2) // 2
-                cx1 = max(0, min(w_img - 200, cx - 100))
-                cx2 = cx1 + 200
-            if (cy2 - cy1) < 200 and h_img >= 200:
+                cx1 = max(0, min(w_img - min_dim, cx - min_dim // 2))
+                cx2 = cx1 + min_dim
+            if (cy2 - cy1) < min_dim and h_img >= min_dim:
                 cy = (cy1 + cy2) // 2
-                cy1 = max(0, min(h_img - 200, cy - 100))
-                cy2 = cy1 + 200
+                cy1 = max(0, min(h_img - min_dim, cy - min_dim // 2))
+                cy2 = cy1 + min_dim
             crop_boxes[f_idx] = (cx1, cy1, cx2, cy2)
         return crop_boxes
 

@@ -473,21 +473,69 @@ for c in active_clusters:
         h_id = human_eids[0]
         o_ids = [eid for eid in eids if eid != h_id]
         fm_h = c['entities'][h_id]['frame_map']
+        
+        # Unified Spatio-Temporal Interaction Window for Person-to-Object Clusters:
+        # 1. Detect physical proximity (arm's reach edge distance <= 40px)
+        # 2. Analyze object dynamics: if the object is transported (max displacement >= 25px while in human proximity),
+        #    the active interaction window focuses on the motion phase up to surface placement (+ grace margin of ~1.5s).
+        #    This prevents post-placement static resting phases (e.g. bag sitting untouched on desk for 15s) from diluting the carrying prompt.
+        # 3. If the object is stationary (e.g. parked car or laptop on desk), the interaction window is directly the close proximity dwell frames.
+        obj_contact_frames = []
         for o_id in o_ids:
             fm_o = c['entities'][o_id]['frame_map']
-            for f in sorted(list(set(fm_h.keys()) & set(fm_o.keys()))):
-                b1, b2 = fm_h[f], fm_o[f]
-                dist = compute_box_edge_distance(b1, b2)
-                is_in_bounds = (b1[2] <= orig_w - 20) and (b1[0] >= 15) and (b1[3] <= orig_h - 20) and (b1[1] >= 15)
-                if dist <= 35.0 and is_in_bounds:
-                    active_contact_frames.append(f)
-        active_contact_frames = sorted(list(set(active_contact_frames)))
+            common_f = sorted(list(set(fm_h.keys()) & set(fm_o.keys())))
+            if not common_f:
+                continue
+            
+            close_f = [
+                f for f in common_f
+                if compute_box_edge_distance(fm_h[f], fm_o[f]) <= 40.0
+                and (fm_h[f][2] <= orig_w - 15 and fm_h[f][0] >= 10 and fm_h[f][3] <= orig_h - 15 and fm_h[f][1] >= 10)
+            ]
+            if not close_f:
+                continue
+            
+            # Trajectory analysis of the object center during human proximity
+            o_centers = np.array([[(fm_o[f][0] + fm_o[f][2]) / 2.0, (fm_o[f][1] + fm_o[f][3]) / 2.0] for f in close_f])
+            if len(o_centers) >= 2:
+                max_disp = float(np.max(np.linalg.norm(o_centers - o_centers[0], axis=1)))
+            else:
+                max_disp = 0.0
+            
+            if max_disp >= 25.0:
+                # Dynamic transport / carrying phase detected across space
+                # Find the frame where the object becomes stationary (placed on surface)
+                rest_frame = None
+                window_size = min(10, len(close_f) // 3)
+                if window_size >= 4:
+                    for idx in range(len(close_f) - window_size):
+                        sub_pts = o_centers[idx : idx + window_size]
+                        sub_disp = np.max(np.linalg.norm(sub_pts - sub_pts[0], axis=1))
+                        # If displacement over window is < 6px after at least 20% of the trajectory
+                        if sub_disp < 6.0 and idx > int(0.20 * len(close_f)):
+                            rest_frame = close_f[idx]
+                            break
+                
+                if rest_frame is not None:
+                    # Include active carrying phase up to placement + generous grace margin (~45 frames / 1.5s)
+                    # to capture the causal act of putting down and releasing the object
+                    fps_est = 30.0
+                    grace_frames = int(1.5 * fps_est)
+                    end_idx = min(len(close_f) - 1, close_f.index(rest_frame) + grace_frames)
+                    active_window = close_f[: end_idx + 1]
+                else:
+                    active_window = close_f
+                obj_contact_frames.extend(active_window)
+            else:
+                # Stationary object manipulation (e.g. parked car break-in, desk interaction)
+                obj_contact_frames.extend(close_f)
+        
+        active_contact_frames = sorted(list(set(obj_contact_frames)))
 
     # Adaptive Spatio-Temporal Sampling Strategy per Cluster Type:
-    # 1. Multi-person interaction clusters: Sample strictly within active_contact_frames where all participants
-    #    are actively in contact and safely within camera boundaries (eliminates border truncation artifacts).
-    # 2. Human-to-Object clusters: Sample across the full co-present interaction arc (transport -> surface placement -> release).
-    if len(human_eids) >= 2 and len(active_contact_frames) >= NUM_VLM_FRAMES:
+    # Prioritize active_contact_frames whenever available (>= NUM_VLM_FRAMES)
+    # ensuring all sampled frames capture genuine physical interaction/manipulation.
+    if len(active_contact_frames) >= NUM_VLM_FRAMES:
         c_step = (len(active_contact_frames) - 1) / (NUM_VLM_FRAMES - 1)
         c_sample_indices = [active_contact_frames[int(round(i * c_step))] for i in range(NUM_VLM_FRAMES)]
     else:
@@ -498,9 +546,9 @@ for c in active_clusters:
         if len(co_present_frames) >= NUM_VLM_FRAMES:
             c_step = (len(co_present_frames) - 1) / (NUM_VLM_FRAMES - 1)
             c_sample_indices = [co_present_frames[int(round(i * c_step))] for i in range(NUM_VLM_FRAMES)]
-        elif len(active_contact_frames) >= NUM_VLM_FRAMES:
-            c_step = (len(active_contact_frames) - 1) / (NUM_VLM_FRAMES - 1)
-            c_sample_indices = [active_contact_frames[int(round(i * c_step))] for i in range(NUM_VLM_FRAMES)]
+        elif len(active_contact_frames) > 0:
+            c_step = (len(active_contact_frames) - 1) / max(1, len(active_contact_frames) - 1)
+            c_sample_indices = [active_contact_frames[int(round(i * c_step))] for i in range(min(len(active_contact_frames), NUM_VLM_FRAMES))]
         else:
             ideal_step = (end_frame - start_frame) / (NUM_VLM_FRAMES - 1)
             c_sample_indices = [int(start_frame + i * ideal_step) for i in range(NUM_VLM_FRAMES)]
@@ -551,11 +599,10 @@ for c in active_clusters:
         "- Temporal Action Continuity: Sequential phases of an interaction across time (such as approaching, extending an arm, making contact, and parting) constitute ONE unified interaction event. Do NOT fragment preparatory reaching motions into a separate 'push' relation.\n"
         "- Interpersonal Actions: Categorize casual physical contact between persons (such as placing a hand on a shoulder, touching an arm or body, or tapping) strictly as 'touch'. Reserve 'push' and 'pull' strictly for visible forceful shoving where an entity is visibly propelled, knocked off balance, or dragged.\n"
         "- Predicates 'carry' and 'hold' apply strictly between a Person (subject) and a moveable Object. A person cannot 'carry' another person unless physically lifting them off the ground.\n"
-        "- PHYSICAL HAND-GRASP REQUIREMENT: 'carry' and 'hold' strictly require direct physical hand contact (grasping, gripping, or lifting the object). If an object is resting on the floor or surface and a person's hands are not physically grasping it (e.g., hands are raised, swinging, or interacting with another person), the person is NOT carrying or holding it. Merely walking past, stepping near, or standing over an object on the ground is NOT an interaction; omit that pair.\n"
-        "- Predicates like 'get_on', 'get_off', 'ride', 'drive' apply ONLY to vehicles or animals.\n"
         "- Categorize a person holding and transporting an object with their hands while moving as 'carry', and holding statically as 'hold'.\n"
-        "- If an object remains stationary in the same location across all frames without movement, omit that pair.\n"
-        "- If an active interaction occurs in any frames, report that relation even if it ends later.\n"
+        "- Temporal Transitions: If a person actively carries or holds an object in early frames, report that valid relation ('carry' or 'hold') even if they subsequently place down or release the object on a surface in later frames.\n"
+        "- Inactive Surface Clutter: If an object remains completely stationary in the exact same location across ALL frames without ever being moved, picked up, or held, omit that pair entirely (merely walking past or standing near an untouched object on the floor/surface is NOT an interaction).\n"
+        "- Predicates like 'get_on', 'get_off', 'ride', 'drive' apply ONLY to vehicles or animals.\n"
         "- In the 'reason' field, describe strictly the visible physical contact between this subject and this object without referencing other entities.\n\n"
         'Respond strictly with the JSON object: {"triplets": [{"subject": "[ID]", "relation": "<verb>", "object": "[ID]", "reason": "..."}]}.'
     )
