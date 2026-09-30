@@ -28,3 +28,4 @@ data/preview_frames/
 Thumbs.db
 *.log
 *.ts
+data/visualizations/

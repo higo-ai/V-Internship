@@ -437,3 +437,234 @@ def render_cluster_zoom_frames(
         order += 1
 
     return saved_info
+
+
+def render_cluster_visualization_video(
+    raw_clean_frames,
+    active_clusters,
+    singletons,
+    all_entities,
+    output_video_path=None,
+    preview_dir=None,
+    num_preview_frames=10,
+    fps=29.97,
+    video_basename="video",
+    color_palette=None,
+    proximity_thresh_px=45.0
+):
+    """
+    VidVRD Task 2: Spatio-Temporal Interaction Clustering (STIC) Visualization
+    Renders full-resolution surveillance video showing ONLY the Cluster Union Box
+    enclosing interacting entities in each active cluster.
+    
+    Mentor & User Specifications strictly enforced:
+    1. Draw ONLY the large bounding box enclosing the active cluster (Union Box).
+    2. STRICT NEGATIVE CONSTRAINT: Do NOT draw individual bounding boxes inside the cluster.
+    3. Header badge on union box: e.g. 'CLUSTER 1: [1] person + [3] handbag' (dynamic IDs and classes).
+    4. STRICT MODULARITY CONSTRAINT: Do NOT include interaction predicates ('touch', 'carry') on video.
+    5. Clean frame: Zero top-left HUD / overlay frames (clean unobstructed surveillance).
+    6. Dynamic Spatio-Temporal Adjacency: If an entity in the cluster separates or is left behind
+       (e.g. backpack left on the floor while humans walk away), it is dynamically detached from
+       the box so the union box does NOT stretch unrealistically across the scene.
+    7. Codec: Uses 'avc1' (H.264) for universal Windows Media Player / Chrome / VS Code playback.
+    """
+    if not raw_clean_frames:
+        return {"output_video_path": None, "preview_frames": []}
+        
+    sorted_frames = sorted(raw_clean_frames.keys())
+    first_f_sec, first_frame = raw_clean_frames[sorted_frames[0]]
+    h_orig, w_orig = first_frame.shape[:2]
+    
+    # Modern bright BGR colors: Emerald Green, Electric Cyan, Neon Orange, Vivid Magenta
+    if color_palette is None:
+        color_palette = [
+            (100, 235, 50),
+            (255, 190, 0),
+            (0, 165, 255),
+            (238, 130, 238),
+            (0, 255, 255)
+        ]
+        
+    writer = None
+    if output_video_path:
+        os.makedirs(os.path.dirname(os.path.abspath(output_video_path)), exist_ok=True)
+        # Use avc1 (H.264) with fallback to mp4v
+        fourcc = cv2.VideoWriter_fourcc(*"avc1")
+        writer = cv2.VideoWriter(output_video_path, fourcc, fps, (w_orig, h_orig))
+        if not writer.isOpened():
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            writer = cv2.VideoWriter(output_video_path, fourcc, fps, (w_orig, h_orig))
+            
+    if preview_dir and num_preview_frames > 0:
+        os.makedirs(preview_dir, exist_ok=True)
+        if len(sorted_frames) <= num_preview_frames:
+            preview_indices = set(sorted_frames)
+        else:
+            step = (len(sorted_frames) - 1) / (num_preview_frames - 1)
+            preview_indices = set(sorted_frames[int(round(i * step))] for i in range(num_preview_frames))
+    else:
+        preview_indices = set()
+        
+    saved_previews = []
+    rendered_frames_meta = {}
+    
+    for f_idx in sorted_frames:
+        f_sec, clean_img = raw_clean_frames[f_idx]
+        vis_img = clean_img.copy()
+        
+        clusters_to_draw = []
+        
+        for c_i, c in enumerate(active_clusters):
+            cid = c.get("cluster_id", f"cluster_{c_i + 1}")
+            c_num = cid.replace("cluster_", "")
+            color = color_palette[c_i % len(color_palette)]
+            
+            present_eids = [eid for eid in c["entity_ids"] if f_idx in all_entities[eid]["frame_map"]]
+            if len(present_eids) < 2:
+                continue
+                
+            # Build frame-level physical proximity adjacency graph
+            # Ensures that if an entity was detached (e.g. backpack resting far away on the floor),
+            # it is not artificially stretched into the cluster box!
+            adj = {eid: set() for eid in present_eids}
+            for i in range(len(present_eids)):
+                for j in range(i + 1, len(present_eids)):
+                    ea, eb = present_eids[i], present_eids[j]
+                    ba = all_entities[ea]["frame_map"][f_idx]
+                    bb = all_entities[eb]["frame_map"][f_idx]
+                    d = compute_box_edge_distance(ba, bb)
+                    iou = compute_box_iou(ba, bb)
+                    if d <= proximity_thresh_px or iou > 0.0:
+                        adj[ea].add(eb)
+                        adj[eb].add(ea)
+                        
+            # Find connected components within this frame
+            visited = set()
+            for eid in present_eids:
+                if eid not in visited:
+                    comp = []
+                    queue = [eid]
+                    visited.add(eid)
+                    while queue:
+                        curr = queue.pop(0)
+                        comp.append(curr)
+                        for neighbor in adj[curr]:
+                            if neighbor not in visited:
+                                visited.add(neighbor)
+                                queue.append(neighbor)
+                                
+                    # Only components with >= 2 entities are actively interacting in this frame
+                    if len(comp) >= 2:
+                        comp_sorted = sorted(comp, key=lambda x: (0 if all_entities[x].get("type") == "person" else 1, x))
+                        boxes = [all_entities[e]["frame_map"][f_idx] for e in comp_sorted]
+                        pad = 12
+                        ux1 = max(0, int(min(b[0] for b in boxes)) - pad)
+                        uy1 = max(0, int(min(b[1] for b in boxes)) - pad)
+                        ux2 = min(w_orig, int(max(b[2] for b in boxes)) + pad)
+                        uy2 = min(h_orig, int(max(b[3] for b in boxes)) + pad)
+                        
+                        entity_parts = [f"{e} {all_entities[e].get('class', '')}" for e in comp_sorted]
+                        entity_desc = " + ".join(entity_parts)
+                        badge_text = f"CLUSTER {c_num}: {entity_desc}"
+                        
+                        clusters_to_draw.append({
+                            "cid": cid,
+                            "c_num": c_num,
+                            "color": color,
+                            "box": (ux1, uy1, ux2, uy2),
+                            "badge_text": badge_text,
+                            "entities": comp_sorted
+                        })
+                        
+                        rendered_frames_meta[f_idx] = {
+                            "sec": round(f_sec, 2),
+                            "cluster_id": cid,
+                            "union_box": [ux1, uy1, ux2, uy2],
+                            "entities": comp_sorted,
+                            "badge": badge_text
+                        }
+                        
+        # Render active cluster union boxes (NO top-left HUD overlay per user request)
+        for cdata in clusters_to_draw:
+            ux1, uy1, ux2, uy2 = cdata["box"]
+            color = cdata["color"]
+            badge_text = cdata["badge_text"]
+            
+            # 1. Union Box outline
+            cv2.rectangle(vis_img, (ux1, uy1), (ux2, uy2), color, 3, cv2.LINE_AA)
+            
+            # 2. Sleek modern corner brackets
+            corner_len = min(22, (ux2 - ux1) // 4, (uy2 - uy1) // 4)
+            c_thick = 4
+            cv2.line(vis_img, (ux1, uy1), (ux1 + corner_len, uy1), color, c_thick, cv2.LINE_AA)
+            cv2.line(vis_img, (ux1, uy1), (ux1, uy1 + corner_len), color, c_thick, cv2.LINE_AA)
+            cv2.line(vis_img, (ux2, uy1), (ux2 - corner_len, uy1), color, c_thick, cv2.LINE_AA)
+            cv2.line(vis_img, (ux2, uy1), (ux2, uy1 + corner_len), color, c_thick, cv2.LINE_AA)
+            cv2.line(vis_img, (ux1, uy2), (ux1 + corner_len, uy2), color, c_thick, cv2.LINE_AA)
+            cv2.line(vis_img, (ux1, uy2), (ux1, uy2 - corner_len), color, c_thick, cv2.LINE_AA)
+            cv2.line(vis_img, (ux2, uy2), (ux2 - corner_len, uy2), color, c_thick, cv2.LINE_AA)
+            cv2.line(vis_img, (ux2, uy2), (ux2 - corner_len, uy2), color, c_thick, cv2.LINE_AA)
+            
+            # 3. High-Contrast Header Badge
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.48
+            thick = 1
+            (tw, th), baseline = cv2.getTextSize(badge_text, font, font_scale, 2)
+            
+            badge_h = th + 12
+            badge_w = tw + 16
+            
+            if uy1 >= badge_h + 4:
+                by1 = uy1 - badge_h
+                by2 = uy1
+                ty = uy1 - 6
+            else:
+                by1 = uy1
+                by2 = uy1 + badge_h
+                ty = uy1 + th + 4
+                
+            bx1 = ux1
+            if bx1 + badge_w > w_orig:
+                bx1 = max(0, w_orig - badge_w - 4)
+            bx2 = min(w_orig, bx1 + badge_w)
+            
+            cv2.rectangle(vis_img, (bx1, by1), (bx2, by2), (20, 20, 20), -1)
+            cv2.rectangle(vis_img, (bx1, by1), (bx2, by2), color, 2)
+            cv2.putText(vis_img, badge_text, (bx1 + 8, ty), font, font_scale, (255, 255, 255), 2, cv2.LINE_AA)
+            
+        if writer:
+            writer.write(vis_img)
+            
+        if f_idx in preview_indices:
+            preview_order = len(saved_previews) + 1
+            preview_fn = f"preview_frame_{preview_order:02d}_{f_sec:.2f}s.jpg"
+            preview_path = os.path.join(preview_dir, preview_fn)
+            cv2.imwrite(preview_path, vis_img)
+            saved_previews.append({
+                "frame_idx": f_idx,
+                "timestamp_sec": round(f_sec, 2),
+                "filename": preview_fn,
+                "path": preview_path,
+                "has_cluster_box": bool(clusters_to_draw),
+                "cluster_info": rendered_frames_meta.get(f_idx, None)
+            })
+            
+    if writer:
+        writer.release()
+        
+    if preview_dir:
+        manifest_path = os.path.join(preview_dir, "preview_manifest.json")
+        with open(manifest_path, "w", encoding="utf-8") as mf:
+            json.dump({
+                "video": video_basename,
+                "total_sampled_previews": len(saved_previews),
+                "singletons_clutter_filtered": singletons,
+                "previews": saved_previews
+            }, mf, indent=2, ensure_ascii=False)
+            
+    return {
+        "output_video_path": output_video_path,
+        "preview_dir": preview_dir,
+        "total_preview_frames": len(saved_previews),
+        "previews": saved_previews
+    }

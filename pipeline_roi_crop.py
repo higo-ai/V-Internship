@@ -35,7 +35,8 @@ from modules.spatial_clustering import (
     compute_box_iou,
     cluster_entities_spatially,
     compute_cluster_union_boxes,
-    render_cluster_zoom_frames
+    render_cluster_zoom_frames,
+    render_cluster_visualization_video
 )
 
 # ------------------------------------------------------------------------------
@@ -52,6 +53,9 @@ parser.add_argument("--stride", type=int, default=1, help="Frame step stride for
 parser.add_argument("--device", type=str, default="auto", help="Compute device: 'auto', 'cuda', or 'cpu'")
 parser.add_argument("--proximity_thresh", type=float, default=None, help="Spatial proximity threshold in pixels (default: dynamic ~15% diagonal)")
 parser.add_argument("--padding_ratio", type=float, default=0.20, help="Adaptive context padding ratio for ROI crop (default: 0.20)")
+parser.add_argument("--visualize_video", type=str, default=None, help="Path to save annotated Task 2 cluster union box video (.mp4)")
+parser.add_argument("--preview_dir", type=str, default=None, help="Directory to save full-frame preview images")
+parser.add_argument("--num_preview_frames", type=int, default=10, help="Number of full-frame preview images to sample")
 cli_args, _ = parser.parse_known_args()
 
 DEVICE = "cuda" if (cli_args.device == "auto" and torch.cuda.is_available()) else ("cpu" if cli_args.device == "auto" else cli_args.device)
@@ -639,3 +643,42 @@ print(f"Generated {len(generated_payloads)} Cluster Payloads in: {payloads_dir}"
 for p in generated_payloads:
     print(f"  * {os.path.basename(p)}")
 print("=" * 80)
+
+
+# ------------------------------------------------------------------------------
+# 7. TASK 2: CLUSTER UNION VISUALIZATION & PREVIEW EXPORT (MENTOR DIRECTIVE)
+# ------------------------------------------------------------------------------
+if cli_args.visualize_video or cli_args.preview_dir:
+    print("\n" + "=" * 80)
+    print("TASK 2: RENDERING CLUSTER UNION VISUALIZATION & PREVIEW FRAMES")
+    print("=" * 80)
+    
+    vis_res = render_cluster_visualization_video(
+        raw_clean_frames=raw_clean_frames,
+        active_clusters=active_clusters,
+        singletons=singletons,
+        all_entities=all_entities,
+        output_video_path=cli_args.visualize_video,
+        preview_dir=cli_args.preview_dir,
+        num_preview_frames=cli_args.num_preview_frames,
+        fps=fps,
+        video_basename=video_basename,
+        proximity_thresh_px=cli_args.proximity_thresh if cli_args.proximity_thresh else 45.0
+    )
+    
+    if vis_res.get("output_video_path"):
+        print(f"SUCCESS: Rendered Cluster Union Box Surveillance Video:")
+        print(f"   - File: {vis_res['output_video_path']}")
+        print(f"   - Rules Applied:")
+        print(f"     * Union Bounding Box ONLY (No individual inner boxes)")
+        print(f"     * Dynamic Header Badge: 'CLUSTER X: [ID] class + [ID] class'")
+        print(f"     * Modularity Preserved (Zero interaction verbs upstream)")
+        print(f"     * Clutter Singletons Unboxed (e.g. wall bag [2])")
+        
+    if vis_res.get("preview_dir"):
+        print(f"\nSUCCESS: Exported {vis_res['total_preview_frames']} Full Panoramic Preview Images:")
+        print(f"   - Directory: {vis_res['preview_dir']}")
+        for prev in vis_res.get("previews", []):
+            box_info = f"Box: {prev['cluster_info']['union_box']}" if prev.get("has_cluster_box") else "No Cluster Box (Separated / Clutter unboxed)"
+            print(f"     * {prev['filename']} (Time: {prev['timestamp_sec']}s) -> {box_info}")
+        print("=" * 80)
