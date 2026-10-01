@@ -79,3 +79,35 @@ Tài liệu theo dõi tiến độ các đầu việc hàng ngày theo chỉ đ�
 - [ ] **Task 3: Kiểm thử tổng quát hóa trên Video mới (Generalization on New Videos)**
   - Thử nghiệm pipeline mới (kết hợp YOLOE tổng quát + Module ROI Zoom Crop) trên video mới trong tập dữ liệu (ví dụ Video 3 có hành vi rơi đồ, hoặc Video 10).
   - Đánh giá khả năng bám bắt tương tác tự động mà không cần bất kỳ tinh chỉnh tham số thủ công nào (Zero manual tuning).
+
+---
+
+## Ngày: 2026-10-01
+
+- [x] **Task 1: Chuẩn hóa thị giác Set-of-Marks (SoM) cho khung hình Zoom Crop đưa vào VLM (Commit `07129e2`)**
+  - **Bản chất & Ý nghĩa kỹ thuật**:
+    + Giải quyết bài toán xung đột thị giác kinh điển giữa *Visual Grounding* (đánh dấu định vị) và *Pixel Occlusion* (che khuất điểm ảnh) theo chuẩn nghiên cứu SoM của Microsoft Research (ECCV 2023).
+    + Khắc phục triệt để hiện tượng khối nhãn đặc (Solid 100%) che lấp hoàn toàn "Điểm tiếp xúc vật lý" (*Visual Contact Point* - ngón tay cầm quai túi xách ở Video 7), khiến VLM bị mù thông tin tiếp xúc và phải đoán mò hành động.
+  - **Các cải tiến đã thực thi**:
+    + **Xóa bỏ hoàn toàn nhãn trùng lặp bên trong Bounding Box**: Loại bỏ lệnh vẽ text ID phụ to đùng bên trong hộp, trả lại 100% diện tích khuôn mặt, ngực áo và chi tiết bề mặt túi xách.
+    + **Áp dụng Alpha Blending (70% Opacity)**: Nền nhãn màu bán trong suốt đóng vai trò như kính lọc quang học, chặn 70% sọc quét/nhiễu nền gạch phía sau để tôn chữ trắng nổi bật, đồng thời cho 30% chi tiết gốc (đốt ngón tay, quai túi) xuyên thấu qua để Vision Transformer trích xuất vector chú ý (*Self-Attention*).
+    + **Độ dày viền 1.5px & Chữ BOLD tương phản cao**: Nâng cấp viền hộp sang 1.5px chống răng cưa (`LINE_AA`) ôm sát dáng người không thô cứng; thiết lập font 0.45 tô đậm đanh thép (CTRL+B) trắng đặc 100%, bảo đảm module OCR đọc chuẩn xác 100% không nhầm lẫn số `[3]` thành `[8]`.
+  - **Kết quả thực nghiệm**: Tái kết xuất thành công toàn bộ 8 frames zoom crop đạt chuẩn thẩm mỹ cao và độ nét tối đa cho cả Video 1 và Video 7, sẵn sàng cho pha thực nghiệm VLM.
+
+- [ ] **Task 2: Tối giản hóa Prompt theo nguyên tắc DRY (Don't Repeat Yourself) & Dọn dẹp nợ kỹ thuật theo chỉ đạo Mentor**
+  - **Bản chất & Ý nghĩa kỹ thuật**:
+    + **Khắc phục "Dư âm kỹ thuật" (Legacy Debt) thời YOLO11n**: Trước đây detector YOLO11n chỉ có 80 nhãn COCO nên phải nhồi toàn bộ 60 class objects của VidVRD vào System Prompt để VLM "nhận diện hộ". Nay đã nâng cấp lên YOLOE-26m nạp sẵn 60 classes (`configs/s_objects.json`), tầng detector đã tự phân loại và dâng tận miệng class cho từng thực thể trong cụm (`[1] person, [4] backpack`), việc giữ 60 classes trong System Prompt trở nên hoàn toàn thừa thãi.
+    + **Triệt tiêu hiện tượng Pha loãng sự chú ý (Attention Dilution & Lost in the Middle)**: Việc lặp lại danh mục 26 quan hệ, quy tắc Clean ID và rào đón phủ định ở cả System Prompt (~5,000 ký tự) lẫn User Prompt (~3,500 ký tự) làm phân tán trọng số Self-Attention của các mô hình nhỏ (3B/4B), khiến mô hình đọc sau quên trước.
+  - **Kế hoạch thực thi**:
+    + Áp dụng nguyên tắc DRY: Tinh gọn System Prompt về đúng 3–4 câu cốt lõi (xác định vai trò chuyên gia VidVRD và yêu cầu xuất JSON).
+    + Cắt bỏ hoàn toàn 60 class objects khỏi System Prompt (tiết kiệm ~1,500 ký tự rác).
+    + Dồn toàn bộ danh mục 26 quan hệ và các luật phân biệt hành động cục bộ (`touch` vs `push`, `carry` vs `hold`) vào duy nhất User Prompt.
+    + Thực hiện kiểm thử đối đầu A/B trên Colab: Đo lường tốc độ suy luận, mức tiêu thụ token và độ chính xác F1 giữa Prompt cũ (dài) vs Prompt mới (tinh gọn).
+
+- [ ] **Task 3: Mở rộng kiểm thử đa cụm trên toàn bộ tập video (Batch Multi-Cluster Generalization)**
+  - **Bản chất & Ý nghĩa kỹ thuật**:
+    + Kiểm chứng tính tổng quát (Generalization) của thuật toán STIC trên toàn bộ kho video trong repo (`data/videos/`).
+    + Đánh giá năng lực của pipeline khi đối mặt với các ca biên phức tạp: video có nhiều nhóm người tương tác độc lập ở các góc khác nhau (tự động phân rã thành `cluster_1`, `cluster_2`...) hoặc video không có tương tác nào (toàn bộ là isolated singletons, tự động bỏ qua).
+  - **Kế hoạch thực thi**:
+    + Viết script quét tự động (batch evaluation loop) duyệt qua toàn bộ video trong `data/videos/`.
+    + Tự động xuất báo cáo tổng hợp: Số lượng cụm phát hiện được trên từng video, zoom factor trung bình, và danh sách các cặp thực thể tương tác.

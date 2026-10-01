@@ -133,18 +133,6 @@
 
 ---
 
-## 2026-10-01
-
-| Task | Khó khăn | Giải pháp | Kết quả | Status |
-|---|---|---|---|---|
-| **Tối ưu hóa hiển thị Set-of-Marks (SoM) cho khung hình Zoom Crop đưa vào VLM** | - Khối nhãn màu đặc (solid 100%) che khuất hoàn toàn điểm tiếp xúc vật lý (ngón tay cầm quai túi xách ở Video 7), khiến VLM mất bằng chứng thị giác trực tiếp.<br>- Nhãn ID phụ to đùng vẽ trùng lặp bên trong hộp bounding box đè lên khuôn mặt, ngực người và bề mặt vật thể.<br>- Viền hộp 2px thô cứng làm lẹm nét cơ thể; trong khi viền 1px thử nghiệm ban đầu lại quá mảnh dễ bị hòa tan vào nền gạch sáng. | - **Áp dụng Alpha Blending (70% opacity):** Nền nhãn bán trong suốt cho phép 30% chi tiết gốc (bàn tay, quai xách) xuyên thấu qua, bảo toàn nguyên vẹn bằng chứng tương tác cho Vision Transformer.<br>- **Xóa bỏ hoàn toàn nhãn trùng bên trong box:** Giải phóng 100% diện tích khuôn mặt và bề mặt thực thể.<br>- **Chuẩn hóa viền 1.5px & chữ BOLD tương phản cao:** Thiết lập viền 1.5px chống răng cưa (`LINE_AA`) và font 0.45 tô đậm (CTRL+B) trắng đặc 100%, đảm bảo module OCR của VLM nhận diện chuẩn xác. | - Kết xuất lại toàn bộ 8 frames zoom crop cho cả Video 1 và Video 7 đạt chất lượng thẩm mỹ cao và chuẩn mực thị giác máy tính.<br>- Loại bỏ triệt để hiện tượng che khuất điểm tiếp xúc (Zero Contact Occlusion), sẵn sàng đưa lên Google Colab thực nghiệm kiểm chứng cùng VLM. | ✅ Done |
-
-**Tổng kết ngày:**
-- Tối ưu hóa toàn diện lớp hiển thị Set-of-Marks (SoM) cho Task 2: giải quyết bài toán xung đột giữa đánh dấu thực thể và che lấp điểm ảnh (Pixel Occlusion) theo chuẩn nghiên cứu SoM của Microsoft Research.
-- Hoàn thành bộ 8 ảnh crop zoom chuẩn hóa cho Video 1 và Video 7, sẵn sàng cho pha thực nghiệm đánh giá hiệu năng suy luận trên Colab.
-
----
-
 ## [YYYY-MM-DD]
 
 | Task | Khó khăn | Giải pháp | Kết quả | Status |
