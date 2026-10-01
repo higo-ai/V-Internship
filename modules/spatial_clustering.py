@@ -415,20 +415,51 @@ def render_cluster_zoom_frames(
             color = color_palette[num_id % len(color_palette)]
             clabel = entities[eid]["class"]
 
-            # Draw local box
-            cv2.rectangle(crop_img, (lx1, ly1), (lx2, ly2), color, 2)
+            # 1. 1.5px Soft Bounding Box Border (anti-aliased visual weight)
+            overlay_b = crop_img.copy()
+            cv2.rectangle(
+                overlay_b,
+                (max(0, lx1 - 1), max(0, ly1 - 1)),
+                (min(crop_w - 1, lx2 + 1), min(crop_h - 1, ly2 + 1)),
+                color,
+                2
+            )
+            crop_img = cv2.addWeighted(overlay_b, 0.45, crop_img, 0.55, 0)
+            cv2.rectangle(crop_img, (lx1, ly1), (lx2, ly2), color, 1, cv2.LINE_AA)
 
-            # Draw prominent label banner
+            # 2. Compact label badge with Alpha Blending (70% opacity, 30% background transparency)
             label_text = f"{eid} {clabel}"
             font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.55
-            thickness = 2
-            (text_w, text_h), baseline = cv2.getTextSize(label_text, font, font_scale, thickness)
-            label_y1 = max(0, ly1 - text_h - 8)
-            label_y2 = ly1
-            cv2.rectangle(crop_img, (lx1, label_y1), (lx1 + text_w + 8, label_y2), color, -1)
-            cv2.putText(crop_img, label_text, (lx1 + 4, ly1 - 4), font, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
-            cv2.putText(crop_img, eid, (lx1 + 6, ly1 + 24), font, 0.70, color, 2, cv2.LINE_AA)
+            font_scale = 0.45
+            (text_w, text_h), baseline = cv2.getTextSize(label_text, font, font_scale, 1)
+
+            badge_h = text_h + 8
+            badge_w = text_w + 10
+            if ly1 >= badge_h + 2:
+                by1 = ly1 - badge_h
+                by2 = ly1
+                ty = ly1 - 4
+            else:
+                by1 = ly1
+                by2 = min(crop_h, ly1 + badge_h)
+                ty = ly1 + text_h + 2
+
+            bx1 = lx1
+            bx2 = min(crop_w, lx1 + badge_w)
+
+            # Local Alpha Blending (70% tint, 30% background)
+            sub = crop_img[by1:by2, bx1:bx2]
+            overlay_badge = np.full_like(sub, color)
+            crop_img[by1:by2, bx1:bx2] = cv2.addWeighted(overlay_badge, 0.70, sub, 0.30, 0)
+
+            # Outline for the badge
+            cv2.rectangle(crop_img, (bx1, by1), (bx2, by2), color, 1, cv2.LINE_AA)
+
+            # 3. Bold White Text (CTRL+B faux-bold double pass)
+            cv2.putText(crop_img, label_text, (bx1 + 5, ty), font, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
+            cv2.putText(crop_img, label_text, (bx1 + 6, ty), font, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
+
+            # Redundant interior duplicate ID completely removed to prevent face/hand occlusion
 
         fn = f"frame_{order:02d}_{f_sec:.2f}s_crop.jpg"
         out_path = os.path.join(output_dir, fn)
