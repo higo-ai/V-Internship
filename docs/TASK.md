@@ -94,7 +94,7 @@ Tài liệu theo dõi tiến độ các đầu việc hàng ngày theo chỉ đ�
     + **Độ dày viền 1.5px & Chữ BOLD tương phản cao**: Nâng cấp viền hộp sang 1.5px chống răng cưa (`LINE_AA`) ôm sát dáng người không thô cứng; thiết lập font 0.45 tô đậm đanh thép (CTRL+B) trắng đặc 100%, bảo đảm module OCR đọc chuẩn xác 100% không nhầm lẫn số `[3]` thành `[8]`.
   - **Kết quả thực nghiệm**: Tái kết xuất thành công toàn bộ 8 frames zoom crop đạt chuẩn thẩm mỹ cao và độ nét tối đa cho cả Video 1 và Video 7, sẵn sàng cho pha thực nghiệm VLM.
 
-- [ ] **Task 2: Tối giản hóa Prompt theo nguyên tắc DRY (Don't Repeat Yourself) & Dọn dẹp nợ kỹ thuật theo chỉ đạo Mentor**
+- [x] **Task 2: Tối giản hóa Prompt theo nguyên tắc DRY (Don't Repeat Yourself) & Dọn dẹp nợ kỹ thuật theo chỉ đạo Mentor**
   - **Bản chất & Ý nghĩa kỹ thuật**:
     + **Khắc phục "Dư âm kỹ thuật" (Legacy Debt) thời YOLO11n**: Trước đây detector YOLO11n chỉ có 80 nhãn COCO nên phải nhồi toàn bộ 60 class objects của VidVRD vào System Prompt để VLM "nhận diện hộ". Nay đã nâng cấp lên YOLOE-26m nạp sẵn 60 classes (`configs/s_objects.json`), tầng detector đã tự phân loại và dâng tận miệng class cho từng thực thể trong cụm (`[1] person, [4] backpack`), việc giữ 60 classes trong System Prompt trở nên hoàn toàn thừa thãi.
     + **Triệt tiêu hiện tượng Pha loãng sự chú ý (Attention Dilution & Lost in the Middle)**: Việc lặp lại danh mục 26 quan hệ, quy tắc Clean ID và rào đón phủ định ở cả System Prompt (~5,000 ký tự) lẫn User Prompt (~3,500 ký tự) làm phân tán trọng số Self-Attention của các mô hình nhỏ (3B/4B), khiến mô hình đọc sau quên trước.

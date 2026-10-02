@@ -622,7 +622,6 @@ for c in active_clusters:
             "padding_ratio": cli_args.padding_ratio,
             "min_internal_distance_px": round(c["min_internal_distance_px"], 1)
         },
-        "allowed_objects_vocabulary_60": allowed_objects_60,
         "allowed_relations_vocabulary_26": relations_list,
         "visual_prompt_frames_sequence": frame_filenames,
         "vlm_system_prompt": vlm_system_prompt,
