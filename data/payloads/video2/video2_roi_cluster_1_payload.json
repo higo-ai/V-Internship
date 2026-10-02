@@ -1,0 +1,61 @@
+{
+  "task": "Video Visual Relation Detection (VidVRD) - Task 2 Dynamic ROI Zoom Crop",
+  "scenario": "Localized Interaction Zone Analysis (cluster_1)",
+  "pipeline_variant": "yoloe_spatial_clustering_dynamic_roi_zoom",
+  "cluster_info": {
+    "cluster_id": "cluster_1",
+    "entities": [
+      {
+        "mark_id": "[1]",
+        "class_label": "person"
+      },
+      {
+        "mark_id": "[4]",
+        "class_label": "handbag"
+      }
+    ],
+    "zoom_magnification_factor": "3.38x",
+    "padding_ratio": 0.2,
+    "min_internal_distance_px": 0.0
+  },
+  "allowed_relations_vocabulary_26": [
+    "bite",
+    "carry",
+    "clean",
+    "cut",
+    "drive",
+    "feed",
+    "get_off",
+    "get_on",
+    "grab",
+    "hit",
+    "hold",
+    "hug",
+    "kick",
+    "kiss",
+    "knock",
+    "lean_on",
+    "lick",
+    "lift",
+    "play(instrument)",
+    "pull",
+    "push",
+    "ride",
+    "shake_hand_with",
+    "throw",
+    "touch",
+    "wave"
+  ],
+  "visual_prompt_frames_sequence": [
+    "frame_01_63.73s_crop.jpg",
+    "frame_02_64.46s_crop.jpg",
+    "frame_03_65.17s_crop.jpg",
+    "frame_04_65.90s_crop.jpg",
+    "frame_05_66.63s_crop.jpg",
+    "frame_06_67.37s_crop.jpg",
+    "frame_07_68.07s_crop.jpg",
+    "frame_08_69.57s_crop.jpg"
+  ],
+  "vlm_system_prompt": "You are an advanced Video Visual Relation Detection (VidVRD) AI for surveillance analytics. You are given a temporal sequence of zoom-cropped video frames with numbered visual marks [ID].\nYour task is to analyze the sequence and detect all active physical relations occurring between the marked entities over time.\n\nOutput format MUST be strictly a valid JSON object matching this schema:\n{\n  \"triplets\": [\n    {\n      \"subject\": \"[ID]\",\n      \"relation\": \"<predicate>\",\n      \"object\": \"[ID]\",\n      \"reason\": \"<brief explanation focusing strictly on the visible physical contact and interaction between this subject and this object>\"\n    }\n  ]\n}\nDO NOT output any markdown code blocks, conversational filler, or text outside the JSON object.",
+  "vlm_user_prompt": "Analyze all provided sequential zoom-crop frames of this localized interaction zone (cluster_1).\nDetected entities with visual marks in this interaction cluster: [1] (person), [4] (handbag).\n\nExamine active interactions between the marked entities across time.\n\nPREDEFINED RELATION TAXONOMY (CLOSED VOCABULARY):\nEvery predicate in the 'relation' field MUST be an exact string match selected strictly from the 26 allowed categories: ['bite', 'carry', 'clean', 'cut', 'drive', 'feed', 'get_off', 'get_on', 'grab', 'hit', 'hold', 'hug', 'kick', 'kiss', 'knock', 'lean_on', 'lick', 'lift', 'play(instrument)', 'pull', 'push', 'ride', 'shake_hand_with', 'throw', 'touch', 'wave']. All out-of-vocabulary verbs are strictly prohibited.\n- Strictly evaluate interactions ONLY between marked entities [ID]. Completely ignore unmarked objects or background clutter; NEVER substitute an unmarked item with a marked person.\n- Clean ID Formatting: In the 'subject' and 'object' fields, output strictly the clean mark ID string (e.g. '[1]', '[2]') without appending class names or descriptive words.\n- Triplet Uniqueness & Predicate Exclusivity: Report each unique relation between a subject and an object AT MOST ONCE for the entire clip. Between the same subject and object, interaction predicates are strictly mutually exclusive: output ONLY the single most comprehensive predicate (e.g., casual contact during walking, greeting, or parting is categorized strictly as 'touch', never 'push'). Do NOT output duplicate or conflicting triplets for different frames.\n- Temporal Action Continuity: Sequential phases of an interaction across time (such as approaching, extending an arm, making contact, and parting) constitute ONE unified interaction event. Do NOT fragment preparatory reaching motions into a separate 'push' relation.\n- Interpersonal Actions: Categorize casual physical contact between persons (such as placing a hand on a shoulder, touching an arm or body, or tapping) strictly as 'touch'. Reserve 'push' and 'pull' strictly for visible forceful shoving where an entity is visibly propelled, knocked off balance, or dragged.\n- Predicates 'carry' and 'hold' apply strictly between a Person (subject) and a moveable Object. A person cannot 'carry' another person unless physically lifting them off the ground.\n- Categorize a person holding and transporting an object with their hands while moving as 'carry', and holding statically as 'hold'.\n- Temporal Transitions: If a person actively carries or holds an object in early frames, report that valid relation ('carry' or 'hold') even if they subsequently place down or release the object on a surface in later frames.\n- Inactive Surface Clutter: If an object remains completely stationary in the exact same location across ALL frames without ever being moved, picked up, or held, omit that pair entirely (merely walking past or standing near an untouched object on the floor/surface is NOT an interaction).\n- Predicates like 'get_on', 'get_off', 'ride', 'drive' apply ONLY to vehicles or animals.\n- In the 'reason' field, describe strictly the visible physical contact between this subject and this object without referencing other entities.\n\nRespond strictly with the JSON object: {\"triplets\": [{\"subject\": \"[ID]\", \"relation\": \"<verb>\", \"object\": \"[ID]\", \"reason\": \"...\"}]}."
+}

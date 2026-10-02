@@ -73,10 +73,8 @@ if not os.path.exists(video_path):
         video_path = alt_data[:-4] + ".mp4"
 
 video_basename = os.path.splitext(os.path.basename(video_path))[0]
-vlm_frames_dir = os.path.join(base_dir, "data", "frames", f"{video_basename}_yoloe")
-payloads_dir = os.path.join(base_dir, "data", "payloads")
+payloads_dir = os.path.join(base_dir, "data", "payloads", video_basename)
 os.makedirs(payloads_dir, exist_ok=True)
-os.makedirs(vlm_frames_dir, exist_ok=True)
 
 START_SEC = cli_args.start_sec
 END_SEC = cli_args.end_sec
@@ -353,13 +351,26 @@ for mo in merged_objects:
                 b_interp = (1.0 - alpha) * b_prev + alpha * b_next
                 mo["frame_map"][f] = b_interp.astype(int)
         
-        # Stationary forward-fill ONLY for resting scene objects (disp < 35px), preventing ghost boxes for carried items
+        # Stationary Forward-Fill:
+        # 1. Permanently stationary scene objects (e.g. parked bicycle, total_disp < 35px)
+        # 2. Placed objects: objects transported and placed down on a surface/ground (tail_disp < 20px, not near border)
         boxes_arr = np.array(list(mo["frame_map"].values()))
         cxs = (boxes_arr[:, 0] + boxes_arr[:, 2]) / 2.0
         cys = (boxes_arr[:, 1] + boxes_arr[:, 3]) / 2.0
-        disp = float(math.hypot(np.ptp(cxs), np.ptp(cys)))
-        if disp < 35.0:
-            last_b = mo["frame_map"][max_f]
+        total_disp = float(math.hypot(np.ptp(cxs), np.ptp(cys)))
+
+        tail_fs = sorted_fs[-min(10, len(sorted_fs)):]
+        tail_boxes = np.array([mo["frame_map"][f] for f in tail_fs])
+        tail_cxs = (tail_boxes[:, 0] + tail_boxes[:, 2]) / 2.0
+        tail_cys = (tail_boxes[:, 1] + tail_boxes[:, 3]) / 2.0
+        tail_disp = float(math.hypot(np.ptp(tail_cxs), np.ptp(tail_cys)))
+
+        last_b = mo["frame_map"][max_f]
+        is_near_border = (last_b[0] < 20 or last_b[1] < 20 or 
+                          last_b[2] > orig_w - 20 or last_b[3] > orig_h - 20)
+
+        if (total_disp < 35.0) or (tail_disp < 20.0 and not is_near_border):
+            print(f"  [Stationary Forward-Fill] Object '{c_class}' resting at frame {max_f} (tail_disp={tail_disp:.1f}px, near_border={is_near_border}). Holding position through frame {end_frame}.")
             for f in range(max_f + 1, end_frame + 1):
                 mo["frame_map"][f] = last_b
 
@@ -437,7 +448,7 @@ for c in active_clusters:
     # Zero re-indexing prevents central database desynchronization and cross-window ID drift!
     cluster_orig_eids = sorted(list(c["entity_ids"]), key=lambda eid: (0 if c["entities"][eid]["type"] == "person" else 1, eid))
     c["entity_ids"] = cluster_orig_eids
-    cluster_frames_dir = os.path.join(base_dir, "data", "frames", cluster_dir_name)
+    cluster_frames_dir = os.path.join(base_dir, "data", "frames", video_basename, cluster_dir_name)
     os.makedirs(cluster_frames_dir, exist_ok=True)
     for old_f in glob.glob(os.path.join(cluster_frames_dir, "*.jpg")):
         try:
@@ -652,13 +663,18 @@ if cli_args.visualize_video or cli_args.preview_dir:
     print("TASK 2: RENDERING CLUSTER UNION VISUALIZATION & PREVIEW FRAMES")
     print("=" * 80)
     
+    effective_preview_dir = cli_args.preview_dir
+    if effective_preview_dir is None and cli_args.visualize_video:
+        effective_preview_dir = os.path.join(base_dir, "data", "preview", video_basename, f"{video_basename}_clusters")
+        os.makedirs(effective_preview_dir, exist_ok=True)
+    
     vis_res = render_cluster_visualization_video(
         raw_clean_frames=raw_clean_frames,
         active_clusters=active_clusters,
         singletons=singletons,
         all_entities=all_entities,
         output_video_path=cli_args.visualize_video,
-        preview_dir=cli_args.preview_dir,
+        preview_dir=effective_preview_dir,
         num_preview_frames=cli_args.num_preview_frames,
         fps=fps,
         video_basename=video_basename,

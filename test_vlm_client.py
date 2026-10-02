@@ -15,7 +15,7 @@ def parse_args():
     parser.add_argument(
         "--payload",
         type=str,
-        default="data/payloads/video1_payload.json",
+        default="data/payloads/video1/video1_roi_cluster_1_payload.json",
         help="Path to VLM prompt payload JSON file"
     )
     parser.add_argument(
