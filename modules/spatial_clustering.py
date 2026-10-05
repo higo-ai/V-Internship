@@ -528,6 +528,12 @@ def render_cluster_visualization_video(
             
     if preview_dir and num_preview_frames > 0:
         os.makedirs(preview_dir, exist_ok=True)
+        for f in os.listdir(preview_dir):
+            if f.endswith(".jpg") or f.endswith(".png") or f.endswith(".json"):
+                try:
+                    os.remove(os.path.join(preview_dir, f))
+                except OSError:
+                    pass
         if len(sorted_frames) <= num_preview_frames:
             preview_indices = set(sorted_frames)
         else:
@@ -615,18 +621,27 @@ def render_cluster_visualization_video(
                             "badge": badge_text
                         }
                         
-        # Render active cluster union boxes (NO top-left HUD overlay per user request)
+        # Render active cluster union boxes with sleek tactical aesthetics (1.5px soft border + alpha-blending badge)
         for cdata in clusters_to_draw:
             ux1, uy1, ux2, uy2 = cdata["box"]
             color = cdata["color"]
             badge_text = cdata["badge_text"]
             
-            # 1. Union Box outline
-            cv2.rectangle(vis_img, (ux1, uy1), (ux2, uy2), color, 3, cv2.LINE_AA)
+            # 1. 1.5px Soft Bounding Box Border (anti-aliased visual weight)
+            overlay_b = vis_img.copy()
+            cv2.rectangle(
+                overlay_b,
+                (max(0, ux1 - 1), max(0, uy1 - 1)),
+                (min(w_orig - 1, ux2 + 1), min(h_orig - 1, uy2 + 1)),
+                color,
+                2
+            )
+            vis_img = cv2.addWeighted(overlay_b, 0.45, vis_img, 0.55, 0)
+            cv2.rectangle(vis_img, (ux1, uy1), (ux2, uy2), color, 1, cv2.LINE_AA)
             
-            # 2. Sleek modern corner brackets
-            corner_len = min(22, (ux2 - ux1) // 4, (uy2 - uy1) // 4)
-            c_thick = 4
+            # 2. Sleek tactical corner brackets
+            corner_len = min(20, (ux2 - ux1) // 5, (uy2 - uy1) // 5)
+            c_thick = 2
             cv2.line(vis_img, (ux1, uy1), (ux1 + corner_len, uy1), color, c_thick, cv2.LINE_AA)
             cv2.line(vis_img, (ux1, uy1), (ux1, uy1 + corner_len), color, c_thick, cv2.LINE_AA)
             cv2.line(vis_img, (ux2, uy1), (ux2 - corner_len, uy1), color, c_thick, cv2.LINE_AA)
@@ -634,34 +649,42 @@ def render_cluster_visualization_video(
             cv2.line(vis_img, (ux1, uy2), (ux1 + corner_len, uy2), color, c_thick, cv2.LINE_AA)
             cv2.line(vis_img, (ux1, uy2), (ux1, uy2 - corner_len), color, c_thick, cv2.LINE_AA)
             cv2.line(vis_img, (ux2, uy2), (ux2 - corner_len, uy2), color, c_thick, cv2.LINE_AA)
-            cv2.line(vis_img, (ux2, uy2), (ux2 - corner_len, uy2), color, c_thick, cv2.LINE_AA)
+            cv2.line(vis_img, (ux2, uy2), (ux2, uy2 - corner_len), color, c_thick, cv2.LINE_AA)
             
-            # 3. High-Contrast Header Badge
+            # 3. Compact Header Badge with Alpha Blending (70% dark tint, 30% background transparency)
             font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.48
-            thick = 1
-            (tw, th), baseline = cv2.getTextSize(badge_text, font, font_scale, 2)
+            font_scale = 0.45
+            (tw, th), baseline = cv2.getTextSize(badge_text, font, font_scale, 1)
             
-            badge_h = th + 12
-            badge_w = tw + 16
+            badge_h = th + 8
+            badge_w = tw + 12
             
-            if uy1 >= badge_h + 4:
+            if uy1 >= badge_h + 2:
                 by1 = uy1 - badge_h
                 by2 = uy1
-                ty = uy1 - 6
+                ty = uy1 - 4
             else:
                 by1 = uy1
-                by2 = uy1 + badge_h
-                ty = uy1 + th + 4
+                by2 = min(h_orig, uy1 + badge_h)
+                ty = uy1 + th + 2
                 
             bx1 = ux1
             if bx1 + badge_w > w_orig:
-                bx1 = max(0, w_orig - badge_w - 4)
+                bx1 = max(0, w_orig - badge_w - 2)
             bx2 = min(w_orig, bx1 + badge_w)
             
-            cv2.rectangle(vis_img, (bx1, by1), (bx2, by2), (20, 20, 20), -1)
-            cv2.rectangle(vis_img, (bx1, by1), (bx2, by2), color, 2)
-            cv2.putText(vis_img, badge_text, (bx1 + 8, ty), font, font_scale, (255, 255, 255), 2, cv2.LINE_AA)
+            # Local Alpha Blending: 80% opacity dark tint with subtle cluster hue, 20% background transparency
+            sub = vis_img[by1:by2, bx1:bx2]
+            dark_tint = (int(color[0] * 0.20 + 15), int(color[1] * 0.20 + 15), int(color[2] * 0.20 + 15))
+            overlay_badge = np.full_like(sub, dark_tint)
+            vis_img[by1:by2, bx1:bx2] = cv2.addWeighted(overlay_badge, 0.80, sub, 0.20, 0)
+            
+            # Crisp 1px outline for the badge
+            cv2.rectangle(vis_img, (bx1, by1), (bx2, by2), color, 1, cv2.LINE_AA)
+            
+            # Faux-bold white text (double-pass)
+            cv2.putText(vis_img, badge_text, (bx1 + 6, ty), font, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
+            cv2.putText(vis_img, badge_text, (bx1 + 7, ty), font, font_scale, (255, 255, 255), 1, cv2.LINE_AA)
             
         if writer:
             writer.write(vis_img)

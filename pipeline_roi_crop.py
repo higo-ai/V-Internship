@@ -336,7 +336,7 @@ for tr in persistent_raw_objects:
     else:
         merged_objects.append(tr)
 
-# Interpolate occlusion gaps and hold stationary position
+# Interpolate occlusion gaps and hold stationary position - Vá lỗ hổng chóp chóp bằng nội suy tuyến tính (Linear Interpolation)
 for mo in merged_objects:
     sorted_fs = sorted(mo["frame_map"].keys())
     if sorted_fs:
@@ -351,7 +351,7 @@ for mo in merged_objects:
                 b_interp = (1.0 - alpha) * b_prev + alpha * b_next
                 mo["frame_map"][f] = b_interp.astype(int)
         
-        # Stationary Forward-Fill:
+        # Stationary Forward-Fill: Giữ vị trí tĩnh khi đồ vật đặt xuống
         # 1. Permanently stationary scene objects (e.g. parked bicycle, total_disp < 35px)
         # 2. Placed objects: objects transported and placed down on a surface/ground (tail_disp < 20px, not near border)
         boxes_arr = np.array(list(mo["frame_map"].values()))
@@ -547,7 +547,7 @@ for c in active_clusters:
         
         active_contact_frames = sorted(list(set(obj_contact_frames)))
 
-    # Adaptive Spatio-Temporal Sampling Strategy per Cluster Type:
+    # Adaptive Spatio-Temporal Sampling Strategy per Cluster Type: Băm đều 8 ảnh trong khoảnh khắc đó
     # Prioritize active_contact_frames whenever available (>= NUM_VLM_FRAMES)
     # ensuring all sampled frames capture genuine physical interaction/manipulation.
     if len(active_contact_frames) >= NUM_VLM_FRAMES:
@@ -570,7 +570,7 @@ for c in active_clusters:
 
     c_sample_frames_clean = {f_idx: raw_clean_frames[f_idx] for f_idx in c_sample_indices if f_idx in raw_clean_frames}
 
-    # Compute stabilized union crop box
+    # Compute stabilized union crop box - Tính hộp bao trùm chung (Union Envelope) có đệm 20%
     crop_boxes = compute_cluster_union_boxes(
         cluster_entity_ids=c["entity_ids"],
         entities=all_entities,
@@ -580,7 +580,7 @@ for c in active_clusters:
         stabilize_temporal_envelope=True
     )
 
-    # Render Zoom Crop Frames
+    # Render Zoom Crop Frames - Cắt ảnh gốc và vẽ Set-of-Marks tinh chỉnh
     saved_frames = render_cluster_zoom_frames(
         cluster=c,
         clean_frames_dict=c_sample_frames_clean,
