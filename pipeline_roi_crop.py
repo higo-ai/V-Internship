@@ -102,9 +102,9 @@ with open(os.path.join(base_dir, "configs", "relations.json"), "r", encoding="ut
 # ------------------------------------------------------------------------------
 # 2. MODEL INITIALIZATION
 # ------------------------------------------------------------------------------
-yoloe_weights = os.path.join(base_dir, "yoloe-26m-seg.pt")
+yoloe_weights = os.path.join(base_dir, "models", "yoloe-26m-seg.pt")
 if not os.path.exists(yoloe_weights):
-    yoloe_weights = os.path.join(base_dir, "weights", "yoloe-26m-seg.pt")
+    yoloe_weights = os.path.join(base_dir, "yoloe-26m-seg.pt")
 model_weights = yoloe_weights
 model = YOLO(model_weights)
 model.to(DEVICE)

@@ -170,11 +170,13 @@
 |---|---|---|---|---|
 | **Nâng cấp Thẩm mỹ Video Gom Cụm (`modules/spatial_clustering.py`) & Tái sinh Dữ liệu Test** | - Bounding box cũ viền dày và badge che khuất góc nhìn; cần chuẩn hóa viền thanh mảnh, góc tactical và nâng độ mờ nhãn badge lên 80% (xuyên thấu 20%). | - Cập nhật `render_cluster_visualization_video`: áp dụng viền mềm 1.5px anti-aliased, góc tactical hiện đại và Alpha Blending 80% dark tint / 20% background.<br>- Tự động dọn rác preview cũ và chạy lại toàn diện trên cả 3 video (Video 1, Video 2, Video 7). | - Xuất bản đồng bộ 3 video gom cụm thẩm mỹ cao (`data/visualizations/`), băm mới 32 ảnh crop Set-of-Marks độ nét cao (`data/frames/`) và 4 file JSON payload (`data/payloads/`). | ✅ Done |
 | **Hệ thống hóa & Chú thích Mã nguồn Giải thuật Cốt lõi (`pipeline_roi_crop.py`)** | Cần làm rõ và minh bạch các cơ chế vận hành: bù frame rớt detection (chóp chóp), bắt trúng khoảnh khắc tương tác, và tỷ lệ đệm ngữ cảnh (padding 20%). | Bổ sung chú thích tường minh vào các khối giải thuật: Linear Interpolation (vá frame rỗng), Stationary Forward-Fill (giữ vết đồ vật đặt xuống), Trajectory Dynamic Window (dò phase buông đồ) và Union Envelope Padding (`0.20`). | Mã nguồn sáng sủa, minh bạch; cấu trúc giải thuật thuần hình học và giải tích không gian - thời gian, sẵn sàng nghiệm thu kỹ thuật. | ✅ Done |
+| **Chuẩn hóa Kiến trúc Thư mục Model & Dọn dẹp Tàn dư Kỹ thuật Cũ** | Tồn đọng file nhị phân lớn từ thử nghiệm cũ (`mobileclip2_b.ts` ~254MB, `pipeline.py`, `yolo11n.pt`) và trọng số bị phân tán lộn xộn ở thư mục gốc. | - Dọn dẹp dứt điểm các file nhị phân và script cũ; chuyển toàn bộ trọng số chính thức vào thư mục chuẩn `models/yoloe-26m-seg.pt`.<br>- Cập nhật liên kết đường dẫn trong `pipeline_roi_crop.py` và `pipeline_yoloe.py` ưu tiên `models/`. | Giải phóng ~330 MB ổ cứng; cấu trúc dự án chuẩn mực, hệ thống kiểm thử tải trọng số từ `models/` thành công 100%. | ✅ Done |
 
 **Tổng kết ngày:**
 - Chuẩn hóa thẩm mỹ video gom cụm giám sát (badge mờ 80%, viền 1.5px, góc tactical).
 - Chạy mới và nghiệm thu trọn vẹn dữ liệu cho toàn bộ 3 video kiểm thử (Video 1, 2, 7).
 - Chú thích và hệ thống hóa rõ ràng các cơ chế toán học cốt lõi trong pipeline Task 2.
+- Dọn dẹp toàn diện tàn dư kỹ thuật cũ, chuẩn hóa cấu trúc thư mục `models/` và cập nhật liên kết đường dẫn mô hình.
 
 ---
 
